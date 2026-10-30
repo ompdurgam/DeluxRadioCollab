@@ -11,8 +11,9 @@ from typing import Optional, Dict, List
 from database import Song, Request, SessionLocal
 from ws.manager import manager
 
-_DEFAULT_SONG_DURATION = 240   # fallback until client reports actual duration
+_DEFAULT_SONG_DURATION = 300   # fallback: 5 min (typical Bollywood song) until client reports
 _UPCOMING_QUEUE_SIZE   = 5     # how many songs to pre-plan
+_SKIP_BUFFER_SECONDS   = 3     # extra seconds after duration before auto-advancing
 
 
 class RadioEngine:
@@ -73,6 +74,10 @@ class RadioEngine:
         if exclude_ids and len(songs) > len(exclude_ids):
             songs = [s for s in songs if s.youtube_video_id not in exclude_ids]
         return self._song_to_dict(random.choice(songs))
+
+    def pick_random_song(self, db, exclude_ids: List[str] = None) -> Optional[Dict]:
+        """Public API: Pick a random active song (used by routers)."""
+        return self._pick_random_song(db, exclude_ids)
 
     # ── Pre-fill upcoming queue ────────────────────────────────────────────────
     def _refill_upcoming(self, db):
@@ -182,7 +187,7 @@ class RadioEngine:
             if not self.is_playing or not self.song_started_at:
                 continue
             elapsed = time.time() - self.song_started_at
-            if elapsed >= self.song_duration + 1:
+            if elapsed >= self.song_duration + _SKIP_BUFFER_SECONDS:
                 print(f"[SKIP] [{elapsed:.0f}s/{self.song_duration:.0f}s] Advancing...")
                 next_play = await self._advance()
                 await self.broadcast_state()

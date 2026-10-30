@@ -11,9 +11,11 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
-# Load backend/.env and root .env
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
-load_dotenv()
+# Load backend/.env (if not already loaded by main.py)
+_env_path = Path(__file__).resolve().parent.parent / ".env"
+if _env_path.exists():
+    load_dotenv(_env_path)
+    load_dotenv()
 
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")

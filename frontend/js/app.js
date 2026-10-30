@@ -278,8 +278,9 @@ const App = (() => {
     _startEq();
     $('cover-disc')?.classList.add('spinning');
 
-    // Clamp offset — don't seek more than ~10 minutes in (safety)
-    const seekTo = Math.min(startSeconds, 600);
+    // Clamp offset — don't seek beyond song duration
+    const maxSeek = (song.duration || state.songDuration || 600);
+    const seekTo = Math.min(Math.max(0, startSeconds), maxSeek);
     console.log(`[Sync] Loading "${song.title}" at ${seekTo.toFixed(1)}s`);
     Player.loadVideo(song.youtube_video_id, true, seekTo);
   }
@@ -480,14 +481,21 @@ const App = (() => {
       .catch(() => {});
   }
 
-  // Fetch first song when no state is cached yet (async — called after play unlock)
+  // Fetch current radio state and start playing (async — called after play unlock)
   function _fetchFirstSong() {
-    fetch('/api/radio/song-ended', { method: 'POST' })
+    fetch('/api/radio/state')
       .then(r => r.json())
       .then(data => {
-        if (data?.next) {
-          if (data.next.started_at) state.songStartedAt = data.next.started_at;
-          _handlePlayNext(data.next);
+        if (!data?.success || !data.state) {
+          state.isPlaying = false;
+          _updatePlayBtn(false);
+          return;
+        }
+        _applyRadioState(data.state);
+        if (state.currentSong?.youtube_video_id) {
+          const offset = _getSyncOffset();
+          console.log(`[Sync] First play — joining at ${offset.toFixed(1)}s`);
+          _loadYTSong(state.currentSong, offset);
         } else {
           state.isPlaying = false;
           _updatePlayBtn(false);

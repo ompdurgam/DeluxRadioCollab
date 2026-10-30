@@ -79,13 +79,33 @@ const Player = (() => {
   function _doLoad(videoId, autoplay, startSeconds) {
     currentVideoId = videoId;
     
-    // 1. Update Audio
+    // 1. Update Audio — must wait for loadedmetadata before seeking
     audioPlayer.src = `/api/radio/stream/${videoId}`;
-    audioPlayer.currentTime = startSeconds;
-    if (autoplay) {
-      audioPlayer.play().catch(e => {
-        console.warn("[Player] Audio blocked by browser:", e);
-      });
+    audioPlayer.load();
+    
+    const seekAndPlay = () => {
+      if (startSeconds > 0 && isFinite(audioPlayer.duration) && audioPlayer.duration > 0) {
+        try { audioPlayer.currentTime = Math.min(startSeconds, audioPlayer.duration - 1); }
+        catch (e) { console.warn('[Player] Seek failed:', e); }
+      }
+      if (autoplay) {
+        audioPlayer.play().catch(e => {
+          console.warn("[Player] Audio blocked by browser:", e);
+        });
+      }
+    };
+    
+    // If metadata is already loaded (cached), seek immediately
+    if (audioPlayer.readyState >= 1 && isFinite(audioPlayer.duration)) {
+      seekAndPlay();
+    } else {
+      audioPlayer.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+      // Fallback: if loadedmetadata never fires (some streams), play after timeout
+      setTimeout(() => {
+        if (autoplay && audioPlayer.paused) {
+          audioPlayer.play().catch(() => {});
+        }
+      }, 3000);
     }
 
     // 2. Update Visuals
@@ -108,8 +128,22 @@ const Player = (() => {
     if (!isReady) {
       currentVideoId = videoId;
       audioPlayer.src = `/api/radio/stream/${videoId}`;
-      audioPlayer.currentTime = startSeconds;
-      if (autoplay) audioPlayer.play().catch(()=>{});
+      audioPlayer.load();
+      
+      const seekAndPlay = () => {
+        if (startSeconds > 0 && isFinite(audioPlayer.duration) && audioPlayer.duration > 0) {
+          try { audioPlayer.currentTime = Math.min(startSeconds, audioPlayer.duration - 1); }
+          catch (e) { /* ignore */ }
+        }
+        if (autoplay) audioPlayer.play().catch(() => {});
+      };
+      
+      if (audioPlayer.readyState >= 1 && isFinite(audioPlayer.duration)) {
+        seekAndPlay();
+      } else {
+        audioPlayer.addEventListener('loadedmetadata', seekAndPlay, { once: true });
+        setTimeout(() => { if (autoplay && audioPlayer.paused) audioPlayer.play().catch(() => {}); }, 3000);
+      }
       
       pendingVideoId = videoId;
       pendingPlay = autoplay;

@@ -192,13 +192,14 @@ def seed(reseed: bool = False):
             total_songs = db.query(Song).count()
             print(f"[INFO] All songs already in catalog (Total: {total_songs}). Skipping duplicate insert.")
 
-        # Create default admin if not exists
-        admin_exists = db.query(AdminUser).filter(AdminUser.username == "superadmin").first()
+        # Create default admin users if they don't exist
+        # 'admin' matches what start.sh displays to the user
+        admin_exists = db.query(AdminUser).filter(AdminUser.username == "admin").first()
         if not admin_exists:
-            hashed = hash_password("superadmin2026")
-            db.add(AdminUser(username="superadmin", password_hash=hashed))
+            hashed = hash_password("delux2025")
+            db.add(AdminUser(username="admin", password_hash=hashed))
             db.commit()
-            print("[OK] Default admin created  ->  username: superadmin  |  password: superadmin2026")
+            print("[OK] Default admin created  ->  username: admin  |  password: delux2025")
         else:
             print("[INFO] Admin user already exists.")
 
