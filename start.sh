@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Delux Radio — Linux Startup Script (converted from start.bat)
+# Delux Radio — Startup Script (Linux & Google Colab)
 # ==============================================================================
 
 set -e
@@ -38,40 +38,107 @@ echo "                  90s Bollywood Radio Station"
 echo "================================================================="
 echo ""
 
+# Parse tunnel argument if provided
+TUNNEL_MODE=""
+for arg in "$@"; do
+    case "$arg" in
+        --pinggy|--pinngy|pinggy|pinngy)
+            TUNNEL_MODE="pinggy"
+            ;;
+        --cloudflare|-cf|cloudflare)
+            TUNNEL_MODE="cloudflare"
+            ;;
+        --localtunnel|-lt|localtunnel)
+            TUNNEL_MODE="localtunnel"
+            ;;
+        --tunnel=*)
+            TUNNEL_MODE="${arg#*=}"
+            ;;
+    esac
+done
+
 cd "${BACKEND_DIR}"
 
-# [1/7] Create venv if it doesn't exist
-if [ ! -d "${SCRIPT_DIR}/venv" ]; then
-    echo " [*] Step 1/7: Creating Python virtual environment..."
-    if [ -f "${SCRIPT_DIR}/setup.sh" ]; then
-        bash "${SCRIPT_DIR}/setup.sh"
-    else
-        python3 -m venv "${SCRIPT_DIR}/venv"
-        source "${SCRIPT_DIR}/venv/bin/activate"
-        pip install -r "${SCRIPT_DIR}/requirements.txt" -q --no-warn-script-location || true
+# Find system Python
+SYSTEM_PYTHON=""
+for cmd in python3 python; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+        SYSTEM_PYTHON="$cmd"
+        break
     fi
-    echo " [+] Success: Virtual environment created."
+done
+
+if [ -z "$SYSTEM_PYTHON" ]; then
+    echo -e "${RED}[-] ERROR: Python 3 not found. Please install python3.${NC}"
+    exit 1
+fi
+
+# Detect Google Colab environment or existing virtualenv
+IS_COLAB=0
+if [ -d "/content" ] || [ -n "$COLAB_RELEASE_TAG" ] || [ -n "$COLAB_GPU" ] || "$SYSTEM_PYTHON" -c "import google.colab" >/dev/null 2>&1; then
+    IS_COLAB=1
+fi
+
+if [ "$IS_COLAB" -eq 1 ]; then
+    echo -e " ${GREEN}[i] Step 1/7: Google Colab environment detected.${NC}"
+    echo "     Using Colab's Python directly (skipping sub-virtualenv)."
     echo ""
+    echo -e " ${GREEN}[i] Step 2/7: Environment ready.${NC}"
+    echo ""
+    PYTHON_CMD="$SYSTEM_PYTHON"
+    PIP_CMD="$PYTHON_CMD -m pip"
+elif [ -n "$VIRTUAL_ENV" ]; then
+    echo " [i] Step 1/7: Active virtual environment detected: $VIRTUAL_ENV"
+    echo " [i] Step 2/7: Virtual environment already active."
+    echo ""
+    PYTHON_CMD="$SYSTEM_PYTHON"
+    PIP_CMD="$PYTHON_CMD -m pip"
 else
-    echo " [i] Step 1/7: Virtual environment found."
+    # [1/7] Create venv if it doesn't exist
+    if [ ! -d "${SCRIPT_DIR}/venv" ]; then
+        echo " [*] Step 1/7: Creating Python virtual environment..."
+        if [ -f "${SCRIPT_DIR}/setup.sh" ]; then
+            bash "${SCRIPT_DIR}/setup.sh" || true
+        else
+            "$SYSTEM_PYTHON" -m venv "${SCRIPT_DIR}/venv" 2>/dev/null || true
+        fi
+        echo " [+] Virtual environment step finished."
+        echo ""
+    else
+        echo " [i] Step 1/7: Virtual environment found."
+        echo ""
+    fi
+
+    # [2/7] Activate venv
+    if [ -f "${SCRIPT_DIR}/venv/bin/activate" ]; then
+        source "${SCRIPT_DIR}/venv/bin/activate"
+        PYTHON_CMD="${SCRIPT_DIR}/venv/bin/python"
+        PIP_CMD="${SCRIPT_DIR}/venv/bin/pip"
+        echo " [i] Step 2/7: Virtual environment activated."
+    elif [ -f "${SCRIPT_DIR}/venv/Scripts/activate" ]; then
+        source "${SCRIPT_DIR}/venv/Scripts/activate"
+        PYTHON_CMD="${SCRIPT_DIR}/venv/Scripts/python"
+        PIP_CMD="${SCRIPT_DIR}/venv/Scripts/pip"
+        echo " [i] Step 2/7: Virtual environment activated."
+    else
+        echo " [!] Step 2/7: Virtual environment activate script not found. Using system Python."
+        PYTHON_CMD="$SYSTEM_PYTHON"
+        PIP_CMD="$PYTHON_CMD -m pip"
+    fi
     echo ""
 fi
 
-# [2/7] Activate venv
-if [ -f "${SCRIPT_DIR}/venv/bin/activate" ]; then
-    source "${SCRIPT_DIR}/venv/bin/activate"
-elif [ -f "${SCRIPT_DIR}/venv/Scripts/activate" ]; then
-    source "${SCRIPT_DIR}/venv/Scripts/activate"
-else
-    echo -e "${RED}[-] ERROR: Could not find virtual environment activation script.${NC}"
-    exit 1
+# Detect if --break-system-packages is needed (Google Colab / Ubuntu 24.04 / PEP 668)
+PIP_FLAGS="--no-warn-script-location"
+if [ "$IS_COLAB" -eq 1 ] || [ -z "${VIRTUAL_ENV:-}" ]; then
+    if $PIP_CMD install --help 2>&1 | grep -q -- '--break-system-packages'; then
+        PIP_FLAGS="$PIP_FLAGS --break-system-packages"
+    fi
 fi
-echo " [i] Step 2/7: Virtual environment activated."
-echo ""
 
 # [3/7] Install / upgrade all dependencies
 echo " [*] Step 3/7: Installing / updating dependencies..."
-if pip install -r "${SCRIPT_DIR}/requirements.txt" -q --no-warn-script-location; then
+if $PIP_CMD install -r "${SCRIPT_DIR}/requirements.txt" -q $PIP_FLAGS; then
     echo " [+] Success: Core dependencies ready."
 else
     echo " [-] Warning: Some packages may have failed. Continuing anyway..."
@@ -80,8 +147,8 @@ echo ""
 
 # [4/7] Auto-update yt-dlp to latest nightly
 echo " [*] Step 4/7: Updating yt-dlp (keeps YouTube stream extraction working)..."
-if pip install "yt-dlp[default]" --pre -U -q --no-warn-script-location 2>/dev/null; then
-    YTDLP_VER=$(python -c "import yt_dlp; print(yt_dlp.version.__version__)" 2>/dev/null || true)
+if $PIP_CMD install "yt-dlp[default]" --pre -U -q $PIP_FLAGS 2>/dev/null; then
+    YTDLP_VER=$($PYTHON_CMD -c "import yt_dlp; print(yt_dlp.version.__version__)" 2>/dev/null || true)
     if [ -n "$YTDLP_VER" ]; then
         echo " [+] Success: yt-dlp is now at version ${YTDLP_VER}"
     else
@@ -146,11 +213,11 @@ echo ""
 echo " [*] Step 6/7: Initialising database..."
 if [ ! -f "${BACKEND_DIR}/delux_radio.db" ]; then
     echo " [*] Creating fresh database and seeding songs..."
-    if ! python -c "from database import create_tables; create_tables()"; then
+    if ! $PYTHON_CMD -c "from database import create_tables; create_tables()"; then
         echo -e "${RED}[-] ERROR: Failed to create database tables!${NC}"
         exit 1
     fi
-    if python seed_songs.py; then
+    if $PYTHON_CMD seed_songs.py; then
         echo " [+] Success: Database initialised and songs seeded."
     else
         echo " [-] Warning: Seed songs script had errors. DB tables are still created."
@@ -164,7 +231,7 @@ echo ""
 # Optional: FFmpeg check
 if ! command -v ffmpeg >/dev/null 2>&1; then
     echo " [-] Warning: FFmpeg not found. Audio mixing will be limited."
-    echo "     Download: https://ffmpeg.org/download.html or install via: sudo apt install ffmpeg"
+    echo "     Install via: sudo apt install ffmpeg"
     echo ""
 else
     echo " [+] FFmpeg found."
@@ -174,7 +241,7 @@ fi
 # Optional: Node.js check
 if ! command -v node >/dev/null 2>&1; then
     echo " [-] Warning: Node.js not found. YouTube extraction may fail for some songs."
-    echo "     Download: https://nodejs.org/"
+    echo "     Install via: sudo apt install nodejs"
     echo ""
 else
     NODE_VER=$(node --version 2>/dev/null || true)
@@ -190,10 +257,27 @@ echo ""
 echo "   [i] Main Player  ->  http://localhost:8000"
 echo "   [i] Admin Panel  ->  http://localhost:8000/admin"
 echo "   [i] Admin Login  ->  admin / delux2025"
+if [ "$IS_COLAB" -eq 1 ]; then
+    echo ""
+    echo -e "   ${YELLOW}[i] Running inside Google Colab!${NC}"
+    echo "   [i] Public Tunnel Options (run in another cell or terminal):"
+    echo -e "       ${CYAN}!bash tunnel.sh pinggy${NC}      (Pinggy SSH Tunnel - Zero Install)"
+    echo -e "       ${CYAN}!bash tunnel.sh cloudflare${NC}  (Cloudflare Tunnel)"
+    echo ""
+    echo -e "   [i] Or run server + tunnel together: ${CYAN}!bash start.sh --pinggy${NC}"
+fi
 echo ""
 echo " ================================================================="
 echo ""
 echo " Press Ctrl+C to stop the server."
 echo ""
 
-exec python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+# If tunnel mode was specified via command line, launch tunnel in background
+if [ -n "$TUNNEL_MODE" ]; then
+    echo -e " ${GREEN}[*] Auto-starting ${TUNNEL_MODE} tunnel in background...${NC}"
+    ( sleep 3 && bash "${SCRIPT_DIR}/tunnel.sh" "$TUNNEL_MODE" ) &
+    TUNNEL_PID=$!
+    trap "kill $TUNNEL_PID 2>/dev/null || true; exit 0" SIGINT SIGTERM EXIT
+fi
+
+exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload

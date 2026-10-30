@@ -3,10 +3,10 @@
 # Delux Radio — Public Internet Tunnel
 # Exposes local Delux Radio server to the public internet.
 # Supports:
-#   1. Cloudflare Tunnel (trycloudflare.com) [Default / Recommended]
-#   2. LocalTunnel (loca.lt via npx)
-#   3. Localhost.run (SSH tunnel - no binary download)
-#   4. Pinggy (SSH tunnel - no binary download)
+#   1. Cloudflare Tunnel (trycloudflare.com) [Recommended]
+#   2. Pinggy (pinggy.io - SSH tunnel, zero installation)
+#   3. LocalTunnel (loca.lt via npx)
+#   4. Localhost.run (SSH tunnel - zero installation)
 # ==============================================================================
 
 set -e
@@ -50,7 +50,7 @@ if curl -s -m 1 "http://127.0.0.1:${PORT}" >/dev/null 2>&1; then
     echo -e " ${GREEN}[+] Local Delux Radio server detected running on port ${PORT}.${NC}"
 else
     echo -e " ${YELLOW}[!] Notice: Delux Radio is not currently detected on http://127.0.0.1:${PORT}.${NC}"
-    echo -e "     Make sure to start the server in another terminal using: ${CYAN}./start.sh${NC}"
+    echo -e "     Make sure to start the server using: ${CYAN}./start.sh${NC}"
 fi
 echo ""
 
@@ -119,6 +119,35 @@ start_cloudflare() {
     "$CLOUDFLARED_BIN" tunnel --url "http://127.0.0.1:${PORT}"
 }
 
+# ── Function: Pinggy (SSH) ───────────────────────────────────────────────────
+start_pinggy() {
+    echo -e "${BOLD}[*] Starting Pinggy SSH Tunnel for port ${PORT}...${NC}"
+    if ! command -v ssh >/dev/null 2>&1; then
+        echo -e "${RED}[-] Error: ssh client not found. Install openssh-client via: sudo apt install openssh-client${NC}"
+        exit 1
+    fi
+
+    # Read optional PINGGY_TOKEN from env or backend/.env
+    TOKEN="${PINGGY_TOKEN:-}"
+    if [ -z "$TOKEN" ] && [ -f "${SCRIPT_DIR}/backend/.env" ]; then
+        TOKEN=$(grep -E '^PINGGY_TOKEN=' "${SCRIPT_DIR}/backend/.env" | cut -d '=' -f 2 | tr -d ' "\r' || true)
+    fi
+
+    PINGGY_HOST="a.pinggy.io"
+    if [ -n "$TOKEN" ]; then
+        PINGGY_HOST="${TOKEN}@a.pinggy.io"
+        echo -e " ${GREEN}[+] Authenticating with custom Pinggy token...${NC}"
+    else
+        echo -e " ${GREEN}[+] Using public free Pinggy tunnel...${NC}"
+    fi
+
+    echo -e " ${CYAN}[i] Watch below for your public Pinggy URL (https://*.a.pinggy.link):${NC}"
+    echo " -----------------------------------------------------------------"
+    echo ""
+
+    ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p 443 -R0:127.0.0.1:"${PORT}" "$PINGGY_HOST"
+}
+
 # ── Function: LocalTunnel ─────────────────────────────────────────────────────
 start_localtunnel() {
     echo -e "${BOLD}[*] Starting LocalTunnel...${NC}"
@@ -147,27 +176,16 @@ start_localhostrun() {
     ssh -o StrictHostKeyChecking=no -R 80:127.0.0.1:"${PORT}" nokey@localhost.run
 }
 
-# ── Function: Pinggy (SSH) ───────────────────────────────────────────────────
-start_pinggy() {
-    echo -e "${BOLD}[*] Starting Pinggy SSH Tunnel...${NC}"
-    if ! command -v ssh >/dev/null 2>&1; then
-        echo -e "${RED}[-] Error: ssh client not found.${NC}"
-        exit 1
-    fi
-    echo -e " ${GREEN}[+] Connecting to Pinggy...${NC}"
-    ssh -o StrictHostKeyChecking=no -p 443 -R0:127.0.0.1:"${PORT}" a.pinggy.io
-}
-
 # Parse command line argument or prompt
 METHOD="$1"
 
 if [ -z "$METHOD" ]; then
     if [ -t 0 ]; then
         echo -e "${BOLD}Select Tunnel Provider:${NC}"
-        echo -e "  ${CYAN}[1]${NC} Cloudflare Tunnel (trycloudflare.com) ${GREEN}(Default - Recommended)${NC}"
-        echo -e "  ${CYAN}[2]${NC} LocalTunnel (loca.lt)"
-        echo -e "  ${CYAN}[3]${NC} Localhost.run (SSH Tunnel - zero installation)"
-        echo -e "  ${CYAN}[4]${NC} Pinggy (SSH Tunnel - zero installation)"
+        echo -e "  ${CYAN}[1]${NC} Cloudflare Tunnel (trycloudflare.com) ${GREEN}(Default)${NC}"
+        echo -e "  ${CYAN}[2]${NC} Pinggy (pinggy.io - SSH Tunnel, zero install) ${GREEN}(Fast & Simple)${NC}"
+        echo -e "  ${CYAN}[3]${NC} LocalTunnel (loca.lt)"
+        echo -e "  ${CYAN}[4]${NC} Localhost.run (SSH Tunnel - zero install)"
         echo ""
         echo -n "Choose [1-4] (auto-selects [1] in 5s): "
         if read -t 5 user_choice; then
@@ -182,21 +200,37 @@ if [ -z "$METHOD" ]; then
     fi
 fi
 
+if [ "$METHOD" = "-h" ] || [ "$METHOD" = "--help" ]; then
+    echo "Usage: ./tunnel.sh [provider]"
+    echo ""
+    echo "Providers:"
+    echo "  1, cloudflare   : Cloudflare Tunnel (trycloudflare.com) [Default]"
+    echo "  2, pinggy       : Pinggy SSH Tunnel (a.pinggy.link) [Fast, zero-install]"
+    echo "  3, localtunnel  : LocalTunnel (loca.lt)"
+    echo "  4, localhostrun : Localhost.run SSH Tunnel"
+    exit 0
+fi
+
 case "$METHOD" in
     1|--cloudflare|-cf|cloudflare)
         start_cloudflare
         ;;
-    2|--localtunnel|-lt|localtunnel)
-        start_localtunnel
-        ;;
-    3|--localhostrun|-lhr|localhostrun)
-        start_localhostrun
-        ;;
-    4|--pinggy|-p|pinggy)
+    2|--pinggy|--pinngy|-p|pinggy|pinngy|Pinggy|Pinngy)
         start_pinggy
         ;;
+    3|--localtunnel|-lt|localtunnel)
+        start_localtunnel
+        ;;
+    4|--localhostrun|-lhr|localhostrun)
+        start_localhostrun
+        ;;
     *)
-        echo -e "${YELLOW}[!] Unknown option '${METHOD}'. Defaulting to Cloudflare Tunnel.${NC}"
-        start_cloudflare
+        # Also handle previous '4' mapping if someone explicitly passed 4 for pinggy
+        if [ "$METHOD" = "4" ]; then
+            start_pinggy
+        else
+            echo -e "${YELLOW}[!] Unknown option '${METHOD}'. Defaulting to Cloudflare Tunnel.${NC}"
+            start_cloudflare
+        fi
         ;;
 esac
