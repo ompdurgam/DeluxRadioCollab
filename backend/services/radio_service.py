@@ -30,7 +30,7 @@ class RadioEngine:
 
         self.mode: str       = "auto"
         self.is_playing: bool = False
-        self.rj_enabled: bool = False
+        self.rj_enabled: bool = os.getenv("RJ_ENABLED", "true").lower() in ("true", "1", "yes")
         self._processing_lock = asyncio.Lock()
         self._auto_loop_task: Optional[asyncio.Task] = None
 

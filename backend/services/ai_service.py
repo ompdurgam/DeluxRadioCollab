@@ -7,12 +7,16 @@ import httpx
 import json
 import random
 import os
+from pathlib import Path
 from typing import Optional
+from dotenv import load_dotenv
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+# Load backend/.env and root .env
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+load_dotenv()
 
-OLLAMA_URL = "http://localhost:11434"
-OLLAMA_MODEL = "qwen3:8b"
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 
 EMOTION_TAGS = {
     "romantic": ["❤️", "love", "sweetheart", "darling", "pyaar"],
@@ -81,26 +85,46 @@ You MUST respond with a single JSON object in this exact shape and nothing else:
 }}
 """
 
-    if GEMINI_API_KEY:
-        try:
-            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
-            payload = {
-                "contents": [{"parts": [{"text": prompt}]}],
-                "generationConfig": {"responseMimeType": "application/json"}
-            }
-            async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.post(gemini_url, json=payload)
-                data = response.json()
-                if "candidates" in data and data["candidates"]:
-                    text_content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    if text_content.startswith("```json"):
-                        text_content = text_content[7:-3].strip()
-                    parsed = json.loads(text_content)
-                    if "reply" in parsed and "voice_instruction" in parsed:
-                        print(f"✅ Gemini generated RJ script successfully!")
-                        return parsed
-        except Exception as e:
-            print(f"⚠️ Gemini API error: {e}. Falling back to Ollama or templates.")
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        candidate_models = []
+        custom_model = os.getenv("GEMINI_MODEL")
+        if custom_model:
+            candidate_models.append(custom_model)
+        candidate_models.extend(["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-3.6-flash"])
+        # Deduplicate
+        seen = set()
+        candidate_models = [m for m in candidate_models if not (m in seen or seen.add(m))]
+
+        for model_name in candidate_models:
+            try:
+                gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={gemini_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"responseMimeType": "application/json"}
+                }
+                async with httpx.AsyncClient(timeout=15) as client:
+                    response = await client.post(gemini_url, json=payload)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "candidates" in data and data["candidates"]:
+                            text_content = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                            if text_content.startswith("```json"):
+                                text_content = text_content[7:-3].strip()
+                            elif text_content.startswith("```"):
+                                text_content = text_content[3:-3].strip()
+                            parsed = json.loads(text_content)
+                            if "reply" in parsed and "voice_instruction" in parsed:
+                                print(f"✅ Gemini ({model_name}) generated RJ script successfully!")
+                                return parsed
+                    elif response.status_code == 404:
+                        # Model not available in this tier/version, try next
+                        continue
+                    else:
+                        print(f"⚠️ Gemini API returned status {response.status_code} for {model_name}: {response.text[:150]}")
+                        break
+            except Exception as e:
+                print(f"⚠️ Gemini API error with {model_name}: {e}")
 
     if await check_ollama_available():
         try:

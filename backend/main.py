@@ -6,6 +6,11 @@ import uuid
 import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+# Load environment variables from backend/.env and current dir
+load_dotenv(Path(__file__).resolve().parent / ".env")
+load_dotenv()
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
