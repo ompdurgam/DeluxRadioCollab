@@ -345,25 +345,42 @@ const App = (() => {
     if (!('mediaSession' in navigator)) return;
     try {
       const title = song?.title || 'Delux Radio';
-      const artist = song?.artist || '90s Bollywood Nonstop';
-      const artwork = song?.thumbnail || `${location.origin}/assets/logo.png`;
+      const artist = [song?.artist, song?.movie].filter(Boolean).join(' · ') || '90s Bollywood Nonstop';
+      const videoId = song?.youtube_video_id;
+      const fallbackImg = `${location.origin}/img/backgroung_mobile.png`;
+
+      const artworkList = videoId ? [
+        { src: `https://img.youtube.com/vi/${videoId}/default.jpg`, sizes: '120x90', type: 'image/jpeg' },
+        { src: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
+        { src: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' },
+        { src: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`, sizes: '1280x720', type: 'image/jpeg' }
+      ] : [
+        { src: fallbackImg, sizes: '512x512', type: 'image/png' }
+      ];
 
       navigator.mediaSession.metadata = new MediaMetadata({
         title: title,
         artist: artist,
-        album: 'Delux Radio Live',
-        artwork: [
-          { src: artwork, sizes: '96x96', type: 'image/jpeg' },
-          { src: artwork, sizes: '128x128', type: 'image/jpeg' },
-          { src: artwork, sizes: '192x192', type: 'image/jpeg' },
-          { src: artwork, sizes: '256x256', type: 'image/jpeg' },
-          { src: artwork, sizes: '512x512', type: 'image/jpeg' }
-        ]
+        album: 'Delux Radio · 90s Bollywood',
+        artwork: artworkList
       });
 
       navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
     } catch (e) {
       console.warn('[MediaSession] Metadata update error:', e);
+    }
+  }
+
+  function _updateMediaSessionPosition(position, duration) {
+    if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState) return;
+    if (isFinite(duration) && duration > 0 && isFinite(position) && position >= 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: Math.max(0, duration),
+          playbackRate: 1,
+          position: Math.min(duration, Math.max(0, position))
+        });
+      } catch (e) {}
     }
   }
 
@@ -749,6 +766,9 @@ const App = (() => {
     }
     const elapsed = Math.max(0, _getSyncOffset());
     timeEl.textContent = dur > 0 ? `· ${_fmtTime(elapsed)} / ${_fmtTime(dur)}` : `· ${_fmtTime(elapsed)}`;
+    if (dur > 0) {
+      _updateMediaSessionPosition(elapsed, dur);
+    }
 
     // Sync watchdog: if local playback elapsed exceeds duration + 4s, verify server state
     if (dur > 10 && elapsed >= dur + 4) {
