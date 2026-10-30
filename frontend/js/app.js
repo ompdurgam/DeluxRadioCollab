@@ -261,16 +261,6 @@ const App = (() => {
       .catch(() => {});
   }
 
-  function _onYTSongEnded() {
-    if (!state.isPlaying) return;
-    fetch('/api/radio/song-ended', { method: 'POST' })
-      .then(r => r.json())
-      .then(d => {
-        if (d?.next) _handlePlayNext(d.next);
-        else _checkServerSongSync();
-      })
-      .catch(() => _checkServerSongSync());
-  }
 
   function _handlePlayNext(data) {
     if (!data || data.type === 'error') return;
