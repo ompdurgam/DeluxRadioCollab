@@ -16,6 +16,15 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="${SCRIPT_DIR}/backend"
 
+# Determine Port from environment variable or backend/.env or default to 8000
+PORT="${PORT:-8000}"
+if [ -f "${BACKEND_DIR}/.env" ]; then
+    ENV_PORT=$(grep -E '^PORT=' "${BACKEND_DIR}/.env" | cut -d '=' -f 2 | tr -d ' "\r' || true)
+    if [ -n "$ENV_PORT" ]; then
+        PORT="$ENV_PORT"
+    fi
+fi
+
 echo ""
 echo -e "${CYAN}${BOLD}"
 echo " ########  #######  ##       ##     ## ##     ## "
@@ -259,7 +268,7 @@ echo " Press Ctrl+C to stop the server."
 echo ""
 
 if [ "$IS_COLAB" -eq 1 ]; then
-    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port "$PORT"
+    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}"
 else
-    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port "$PORT" --reload --reload-exclude "*.db*" --reload-exclude "audio/*"
+    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port "${PORT:-8000}" --reload --reload-exclude "*.db*" --reload-exclude "audio/*"
 fi
