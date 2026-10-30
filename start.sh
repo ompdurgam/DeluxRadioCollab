@@ -38,25 +38,6 @@ echo "                  90s Bollywood Radio Station"
 echo "================================================================="
 echo ""
 
-# Parse tunnel argument if provided
-TUNNEL_MODE=""
-for arg in "$@"; do
-    case "$arg" in
-        --pinggy|--pinngy|pinggy|pinngy)
-            TUNNEL_MODE="pinggy"
-            ;;
-        --cloudflare|-cf|cloudflare)
-            TUNNEL_MODE="cloudflare"
-            ;;
-        --localtunnel|-lt|localtunnel)
-            TUNNEL_MODE="localtunnel"
-            ;;
-        --tunnel=*)
-            TUNNEL_MODE="${arg#*=}"
-            ;;
-    esac
-done
-
 cd "${BACKEND_DIR}"
 
 # Find system Python
@@ -228,7 +209,15 @@ else
 fi
 echo ""
 
-# Optional: FFmpeg check
+# System dependency check (FFmpeg & Node.js)
+if [ "$IS_COLAB" -eq 1 ]; then
+    if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v node >/dev/null 2>&1; then
+        echo -e " ${CYAN}[*] Installing FFmpeg and Node.js in Colab...${NC}"
+        apt-get update -qq >/dev/null 2>&1 || true
+        apt-get install -y -qq ffmpeg nodejs openssh-client >/dev/null 2>&1 || true
+    fi
+fi
+
 if ! command -v ffmpeg >/dev/null 2>&1; then
     echo " [-] Warning: FFmpeg not found. Audio mixing will be limited."
     echo "     Install via: sudo apt install ffmpeg"
@@ -238,7 +227,6 @@ else
     echo ""
 fi
 
-# Optional: Node.js check
 if ! command -v node >/dev/null 2>&1; then
     echo " [-] Warning: Node.js not found. YouTube extraction may fail for some songs."
     echo "     Install via: sudo apt install nodejs"
@@ -254,17 +242,15 @@ echo " [*] Step 7/7: Starting Delux Radio..."
 echo ""
 echo " ================================================================="
 echo ""
-echo "   [i] Main Player  ->  http://localhost:8000"
-echo "   [i] Admin Panel  ->  http://localhost:8000/admin"
+echo "   [i] Main Player  ->  http://localhost:${PORT}"
+echo "   [i] Admin Panel  ->  http://localhost:${PORT}/admin"
 echo "   [i] Admin Login  ->  admin / delux2025"
 if [ "$IS_COLAB" -eq 1 ]; then
     echo ""
     echo -e "   ${YELLOW}[i] Running inside Google Colab!${NC}"
-    echo "   [i] Public Tunnel Options (run in another cell or terminal):"
+    echo "   [i] To access publicly, run tunnel in a separate cell or terminal:"
     echo -e "       ${CYAN}!bash tunnel.sh pinggy${NC}      (Pinggy SSH Tunnel - Zero Install)"
     echo -e "       ${CYAN}!bash tunnel.sh cloudflare${NC}  (Cloudflare Tunnel)"
-    echo ""
-    echo -e "   [i] Or run server + tunnel together: ${CYAN}!bash start.sh --pinggy${NC}"
 fi
 echo ""
 echo " ================================================================="
@@ -272,12 +258,8 @@ echo ""
 echo " Press Ctrl+C to stop the server."
 echo ""
 
-# If tunnel mode was specified via command line, launch tunnel in background
-if [ -n "$TUNNEL_MODE" ]; then
-    echo -e " ${GREEN}[*] Auto-starting ${TUNNEL_MODE} tunnel in background...${NC}"
-    ( sleep 3 && bash "${SCRIPT_DIR}/tunnel.sh" "$TUNNEL_MODE" ) &
-    TUNNEL_PID=$!
-    trap "kill $TUNNEL_PID 2>/dev/null || true; exit 0" SIGINT SIGTERM EXIT
+if [ "$IS_COLAB" -eq 1 ]; then
+    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port "$PORT"
+else
+    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port "$PORT" --reload --reload-exclude "*.db*" --reload-exclude "audio/*"
 fi
-
-exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload

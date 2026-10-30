@@ -101,13 +101,49 @@ async def stream_audio(video_id: str):
     raise HTTPException(status_code=500, detail="Could not extract stream")
 
 
+class DurationReport(BaseModel):
+    video_id: str
+    duration: float
+
+
+@router.post("/duration")
+async def report_duration(report: DurationReport):
+    """Allow client to report verified duration via REST fallback."""
+    if report.video_id and report.duration > 10:
+        await radio_engine.update_song_duration(report.video_id, report.duration)
+        return {"success": True}
+    return {"success": False}
+
+
 @router.post("/song-ended")
 async def song_ended(db: Session = Depends(get_db)):
     """
-    Deprecated — server auto-loop now controls all song transitions.
-    Kept for backwards compatibility; always returns current state.
+    Client reports current song ended locally.
+    If the server song has finished (elapsed >= song_duration - 5s) or server is idle,
+    advance immediately and broadcast to all listeners.
+    Otherwise return current song state so client can resync.
     """
-    return {"success": True, "message": "Server controls transitions"}
+    import time
+    from ws.manager import manager
+
+    elapsed = time.time() - radio_engine.song_started_at if radio_engine.song_started_at else 0
+    min_threshold = max(10.0, radio_engine.song_duration - 5.0)
+
+    if elapsed >= min_threshold or not radio_engine.is_playing:
+        next_play = await radio_engine._advance()
+        await radio_engine.broadcast_state()
+        await manager.broadcast({"type": "play_next", "data": next_play})
+        return {"success": True, "advanced": True, "next": next_play}
+
+    return {
+        "success": True,
+        "advanced": False,
+        "next": {
+            "type": radio_engine.mode,
+            "song": radio_engine.current_song,
+            "started_at": radio_engine.song_started_at,
+        }
+    }
 
 
 @router.get("/next")

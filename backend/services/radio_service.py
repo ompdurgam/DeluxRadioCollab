@@ -171,27 +171,33 @@ class RadioEngine:
         loop_count = 0
         
         while True:
-            await asyncio.sleep(1)
-            loop_count += 1
-            
-            # Every 60 seconds, clean up audio files older than 10 minutes (600s)
-            if loop_count % 60 == 0:
-                try:
-                    now = time.time()
-                    for f in audio_dir.glob("rj_*"):
-                        if f.is_file() and (now - f.stat().st_mtime) > 600:
-                            f.unlink(missing_ok=True)
-                except Exception as e:
-                    print(f"[CLEANUP ERR] {e}")
+            try:
+                await asyncio.sleep(1)
+                loop_count += 1
+                
+                # Every 60 seconds, clean up audio files older than 10 minutes (600s)
+                if loop_count % 60 == 0:
+                    try:
+                        now = time.time()
+                        for f in audio_dir.glob("rj_*"):
+                            if f.is_file() and (now - f.stat().st_mtime) > 600:
+                                f.unlink(missing_ok=True)
+                    except Exception as e:
+                        print(f"[CLEANUP ERR] {e}")
 
-            if not self.is_playing or not self.song_started_at:
-                continue
-            elapsed = time.time() - self.song_started_at
-            if elapsed >= self.song_duration + _SKIP_BUFFER_SECONDS:
-                print(f"[SKIP] [{elapsed:.0f}s/{self.song_duration:.0f}s] Advancing...")
-                next_play = await self._advance()
-                await self.broadcast_state()
-                await manager.broadcast({"type": "play_next", "data": next_play})
+                if not self.is_playing or not self.song_started_at:
+                    continue
+                elapsed = time.time() - self.song_started_at
+                if elapsed >= self.song_duration + _SKIP_BUFFER_SECONDS:
+                    print(f"[SKIP] [{elapsed:.0f}s/{self.song_duration:.0f}s] Advancing...")
+                    next_play = await self._advance()
+                    await self.broadcast_state()
+                    await manager.broadcast({"type": "play_next", "data": next_play})
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[LOOP ERR] Unexpected error in auto loop: {e}")
+                await asyncio.sleep(2)
 
     # ── Advance to next song ───────────────────────────────────────────────────
     async def _advance(self) -> Dict:

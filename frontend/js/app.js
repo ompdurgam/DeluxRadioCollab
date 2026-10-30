@@ -35,6 +35,7 @@ const App = (() => {
     songStartedAt:  0,     // Server's Unix timestamp when current song started
     songDuration:   0,     // Current song total duration in seconds
     clockDrift:     0,     // Estimated difference: server_time - local_time
+    pingInterval:   null,  // Keepalive interval for tunnels/proxies
   };
 
   const $ = id => document.getElementById(id);
@@ -82,7 +83,9 @@ const App = (() => {
 
   // ── WebSocket ──────────────────────────────────────────────────────────────
   function _connectWebSocket() {
-    const wsUrl = `ws://${location.host}/ws`;
+    // Automatically select wss:// when on https:// (Google Colab, Pinggy, Cloudflare, etc.)
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${location.host}/ws`;
     try {
       state.ws = new WebSocket(wsUrl);
     } catch (e) {
@@ -94,14 +97,30 @@ const App = (() => {
     Chat.setWs(state.ws);
 
     state.ws.onopen = () => {
+      console.log('[WS] Connected to Delux Radio');
       state.wsConnected = true;
       state.ws.send(JSON.stringify({ type: 'set_username', username: state.username }));
+
+      // Immediately resync state upon connect / reconnect
+      _fetchInitialState();
+
+      // Start keep-alive ping heartbeat every 15s to prevent tunnels from timing out
+      if (state.pingInterval) clearInterval(state.pingInterval);
+      state.pingInterval = setInterval(() => {
+        if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+          state.ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 15000);
     };
     state.ws.onmessage = e => {
       try { _handleWsMessage(JSON.parse(e.data)); } catch {}
     };
     state.ws.onclose = () => {
       state.wsConnected = false;
+      if (state.pingInterval) {
+        clearInterval(state.pingInterval);
+        state.pingInterval = null;
+      }
       setTimeout(_connectWebSocket, 3000);
     };
     state.ws.onerror = () => {};
@@ -214,19 +233,43 @@ const App = (() => {
     }
   }
 
-  // ── Song transitions ───────────────────────────────────────────────────────
+  // ── Song transitions & Sync Watchdog ───────────────────────────────────────
+  let _lastSyncCheck = 0;
+  function _checkServerSongSync() {
+    const now = Date.now();
+    if (now - _lastSyncCheck < 2000) return;
+    _lastSyncCheck = now;
+
+    fetch('/api/radio/state')
+      .then(r => r.json())
+      .then(d => {
+        if (!d?.success || !d.state) return;
+        const s = d.state;
+        _applyRadioState(s);
+
+        if (state.isPlaying && s.current_song && state.currentSong &&
+            s.current_song.youtube_video_id !== state.currentSong.youtube_video_id) {
+          console.log('[Sync] Server song change detected via sync check');
+          _handlePlayNext({
+            type: s.mode,
+            song: s.current_song,
+            started_at: s.song_started_at,
+            rj_audio_url: s.rj_audio_url
+          });
+        }
+      })
+      .catch(() => {});
+  }
+
   function _onYTSongEnded() {
     if (!state.isPlaying) return;
-    // Tell server the song ended → server picks next → broadcasts play_next to ALL clients
-    if (state.ws?.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'song_ended' }));
-    } else {
-      // Fallback: REST call
-      fetch('/api/radio/song-ended', { method: 'POST' })
-        .then(r => r.json())
-        .then(d => { if (d?.next) _handlePlayNext(d.next); })
-        .catch(() => {});
-    }
+    fetch('/api/radio/song-ended', { method: 'POST' })
+      .then(r => r.json())
+      .then(d => {
+        if (d?.next) _handlePlayNext(d.next);
+        else _checkServerSongSync();
+      })
+      .catch(() => _checkServerSongSync());
   }
 
   function _handlePlayNext(data) {
@@ -379,17 +422,30 @@ const App = (() => {
       // the next song precisely. getDuration() is reliable once playing starts.
       const sendDurationReport = () => {
         const duration = Player.getDuration();
-        if (duration > 10 && videoId && state.ws?.readyState === WebSocket.OPEN) {
+        if (duration > 10 && videoId) {
           let totalDuration = duration;
           if (state.lastRjDuration && state.radioMode === 'request') {
             totalDuration += state.lastRjDuration;
           }
-          state.ws.send(JSON.stringify({
-            type:     'song_duration_report',
-            video_id: videoId,
-            duration: Math.round(totalDuration),
-          }));
-          console.log(`[Sync] Reported total duration: ${Math.round(totalDuration)}s for ${videoId}`);
+          const roundedDur = Math.round(totalDuration);
+
+          // 1. Report via WebSocket if open
+          if (state.ws?.readyState === WebSocket.OPEN) {
+            state.ws.send(JSON.stringify({
+              type:     'song_duration_report',
+              video_id: videoId,
+              duration: roundedDur,
+            }));
+          }
+
+          // 2. Also report via REST endpoint (ensures Colab/tunnel always has exact duration)
+          fetch('/api/radio/duration', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ video_id: videoId, duration: roundedDur })
+          }).catch(() => {});
+
+          console.log(`[Sync] Reported total duration: ${roundedDur}s for ${videoId}`);
           state.lastRjDuration = 0;
           return true;
         }
@@ -403,18 +459,36 @@ const App = (() => {
     });
 
     Player.onEnded(() => {
-      // Song ended on this client — just update UI, wait for server's play_next.
-      // DO NOT call song-ended or pick next song — the server controls this.
-      console.log('[Client] Song ended locally — waiting for server play_next');
+      console.log('[Client] Song ended locally — coordinating next song');
       $('cover-disc')?.classList.remove('spinning');
-      // Keep isPlaying=true so when play_next arrives we auto-play
+
+      if (!state.isPlaying) return;
+
+      // Give server auto-loop 1.5s buffer to broadcast play_next; if delayed, query server
+      setTimeout(() => {
+        if (!state.isPlaying) return;
+        fetch('/api/radio/song-ended', { method: 'POST' })
+          .then(r => r.json())
+          .then(d => {
+            if (d?.next) {
+              _handlePlayNext(d.next);
+            } else {
+              _checkServerSongSync();
+            }
+          })
+          .catch(() => _checkServerSongSync());
+      }, 1500);
     });
 
     Player.onError((code) => {
-      // YouTube error (e.g. video unavailable in this country).
-      // Just log it — the server will advance after song_duration anyway.
-      console.warn('[Player] YouTube error code:', code);
+      console.warn('[Player] Audio/Visual error code:', code);
       $('cover-disc')?.classList.remove('spinning');
+      if (state.isPlaying) {
+        // If error persists, trigger watchdog check to keep station moving
+        setTimeout(() => {
+          if (state.isPlaying) _checkServerSongSync();
+        }, 3000);
+      }
     });
   }
 
@@ -581,10 +655,24 @@ const App = (() => {
     }
     const elapsed = Math.max(0, _getSyncOffset());
     timeEl.textContent = dur > 0 ? `· ${_fmtTime(elapsed)} / ${_fmtTime(dur)}` : `· ${_fmtTime(elapsed)}`;
+
+    // Sync watchdog: if local playback elapsed exceeds duration + 4s, verify server state
+    if (dur > 10 && elapsed >= dur + 4) {
+      _checkServerSongSync();
+    }
   }
 
   function _startProgressTick() {
-    setInterval(_updateProgressDisplay, 1000);
+    let lastPoll = 0;
+    setInterval(() => {
+      _updateProgressDisplay();
+      // If WebSocket is not connected, poll every 5s to keep listeners count and queue alive
+      const now = Date.now();
+      if (!state.wsConnected && (now - lastPoll > 5000)) {
+        lastPoll = now;
+        _checkServerSongSync();
+      }
+    }, 1000);
   }
 
   function _updateUsernameDisplay() {

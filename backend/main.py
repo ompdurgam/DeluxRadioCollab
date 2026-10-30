@@ -94,6 +94,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await manager.connect(websocket, client_id, username)
 
+    # Broadcast updated listener count to all listeners immediately
+    await radio_engine.broadcast_state()
+
     # Send current radio state immediately on connect
     await manager.send_personal(
         {"type": "radio_state", "data": radio_engine.to_dict()},
