@@ -211,7 +211,7 @@ async def websocket_endpoint(websocket: WebSocket):
                 video_id = str(data.get("video_id", ""))
                 duration = float(data.get("duration", 0))
                 if video_id and duration > 10:
-                    radio_engine.update_song_duration(video_id, duration)
+                    await radio_engine.update_song_duration(video_id, duration)
 
             # ── Ignored: clients must NOT trigger song changes ────────────────────
             elif msg_type == "song_ended":

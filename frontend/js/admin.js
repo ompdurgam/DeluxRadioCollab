@@ -143,10 +143,12 @@ const Admin = (() => {
     // Sync clock
     if (s.song_started_at > 0) _songStartedAt = s.song_started_at;
     if (s.song_duration   > 0) _songDuration  = s.song_duration;
+    else if (song && song.duration > 0) _songDuration = song.duration;
     if (s.server_time     > 0) {
-      const drift = s.server_time - (Date.now() / 1000);
       _songStartedAt = s.song_started_at;
     }
+
+    _tickProgress();
 
     // Queue
     if (s.upcoming_queue) _renderQueue(s.upcoming_queue);

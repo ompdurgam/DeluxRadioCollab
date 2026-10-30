@@ -364,24 +364,29 @@ const App = (() => {
       $('cover-disc')?.classList.add('spinning');
 
       // Report the actual song duration to the server so it can schedule
-      // the next song precisely.  getDuration() is reliable once playing starts.
-      const duration = Player.getDuration();
-      if (duration > 10 && videoId && state.ws?.readyState === WebSocket.OPEN) {
-        let totalDuration = duration;
-        // If we just played an RJ announcement, add its duration to the total
-        if (state.lastRjDuration && state.radioMode === 'request') {
-          totalDuration += state.lastRjDuration;
+      // the next song precisely. getDuration() is reliable once playing starts.
+      const sendDurationReport = () => {
+        const duration = Player.getDuration();
+        if (duration > 10 && videoId && state.ws?.readyState === WebSocket.OPEN) {
+          let totalDuration = duration;
+          if (state.lastRjDuration && state.radioMode === 'request') {
+            totalDuration += state.lastRjDuration;
+          }
+          state.ws.send(JSON.stringify({
+            type:     'song_duration_report',
+            video_id: videoId,
+            duration: Math.round(totalDuration),
+          }));
+          console.log(`[Sync] Reported total duration: ${Math.round(totalDuration)}s for ${videoId}`);
+          state.lastRjDuration = 0;
+          return true;
         }
+        return false;
+      };
 
-        state.ws.send(JSON.stringify({
-          type:     'song_duration_report',
-          video_id: videoId,
-          duration: Math.round(totalDuration),
-        }));
-        console.log(`[Sync] Reported total duration: ${Math.round(totalDuration)}s for ${videoId}`);
-        
-        // Reset lastRjDuration
-        state.lastRjDuration = 0;
+      if (!sendDurationReport()) {
+        setTimeout(sendDurationReport, 1500);
+        setTimeout(sendDurationReport, 3500);
       }
     });
 

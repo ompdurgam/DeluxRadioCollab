@@ -41,14 +41,17 @@ async def stream_audio(video_id: str):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-                return info.get('url')
+                return info.get('url'), info.get('duration')
         except Exception as e:
             print(f"yt-dlp extract error: {e}")
-            return None
+            return None, None
 
-    url = await asyncio.to_thread(extract)
-    if url:
+    res = await asyncio.to_thread(extract)
+    if res and res[0]:
+        url, dur = res
         stream_cache[video_id] = url
+        if dur and dur > 10:
+            asyncio.create_task(radio_engine.update_song_duration(video_id, float(dur)))
         return RedirectResponse(url)
     
     raise HTTPException(status_code=500, detail="Could not extract stream")

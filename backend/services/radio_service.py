@@ -3,6 +3,7 @@ Radio Service — Delux Radio
 True server-controlled streaming with pre-planned upcoming queue.
 """
 import asyncio
+import os
 import random
 import time
 from typing import Optional, Dict, List
@@ -52,6 +53,7 @@ class RadioEngine:
 
     # ── Song helpers ───────────────────────────────────────────────────────────
     def _song_to_dict(self, song: Song) -> Dict:
+        dur = song.duration if (song.duration and song.duration > 20) else _DEFAULT_SONG_DURATION
         return {
             "id":               song.id,
             "title":            song.title,
@@ -59,6 +61,7 @@ class RadioEngine:
             "movie":            song.movie or "",
             "release_year":     song.release_year,
             "youtube_video_id": song.youtube_video_id,
+            "duration":         dur,
         }
 
     def _pick_random_song(self, db, exclude_ids: List[str] = None) -> Optional[Dict]:
@@ -96,13 +99,14 @@ class RadioEngine:
             # Start playing
             song = self._pick_random_song(db)
             if song:
+                dur = float(song.get("duration") or _DEFAULT_SONG_DURATION)
                 self.current_song      = song
                 self.song_started_at   = time.time()
-                self.song_duration     = _DEFAULT_SONG_DURATION
-                self._duration_confirmed = False
+                self.song_duration     = dur
+                self._duration_confirmed = bool(dur != _DEFAULT_SONG_DURATION)
                 self.is_playing        = True
                 self.mode              = "auto"
-                print(f"[RADIO ON AIR] {song['title']} -- {song['artist']}")
+                print(f"[RADIO ON AIR] {song['title']} -- {song['artist']} ({dur:.0f}s)")
 
             # Pre-fill upcoming queue
             self._refill_upcoming(db)
@@ -113,17 +117,36 @@ class RadioEngine:
             db.close()
 
     # ── Duration reporting ─────────────────────────────────────────────────────
-    def update_song_duration(self, video_id: str, duration_seconds: float):
+    async def update_song_duration(self, video_id: str, duration_seconds: float):
         if not self.current_song:
             return
         if self.current_song.get("youtube_video_id") != video_id:
             return
         if duration_seconds < 10:
             return
-        if not self._duration_confirmed or abs(self.song_duration - duration_seconds) > 10:
+
+        duration_seconds = float(duration_seconds)
+        if not self._duration_confirmed or abs(self.song_duration - duration_seconds) > 3:
             print(f"[DURATION] Confirmed: {duration_seconds:.0f}s for \"{self.current_song['title']}\"")
             self.song_duration       = duration_seconds
+            self.current_song["duration"] = duration_seconds
             self._duration_confirmed = True
+
+            # Save confirmed duration to DB so future plays use this exact length
+            def _save_db():
+                db = SessionLocal()
+                try:
+                    db_song = db.query(Song).filter(Song.youtube_video_id == video_id).first()
+                    if db_song:
+                        db_song.duration = int(duration_seconds)
+                        db.commit()
+                except Exception as e:
+                    print(f"[DURATION DB ERR] {e}")
+                finally:
+                    db.close()
+
+            await asyncio.to_thread(_save_db)
+            await self.broadcast_state()
 
     # ── Server auto-loop (THE authoritative clock) ─────────────────────────────
     async def start_auto_loop(self):
@@ -174,9 +197,10 @@ class RadioEngine:
                     song = req.get("song")
                     if song:
                         self.current_song = song
+                    dur = float(song.get("duration") if (song and song.get("duration")) else _DEFAULT_SONG_DURATION)
                     self.song_started_at     = time.time()
-                    self.song_duration       = _DEFAULT_SONG_DURATION
-                    self._duration_confirmed = False
+                    self.song_duration       = dur
+                    self._duration_confirmed = bool(dur != _DEFAULT_SONG_DURATION)
                     self._refill_upcoming(db)
                     return {
                         "type":         "request",
@@ -196,10 +220,11 @@ class RadioEngine:
             if not song:
                 return {"type": "error", "message": "No songs in catalog"}
 
+            dur = float(song.get("duration") or _DEFAULT_SONG_DURATION)
             self.current_song        = song
             self.song_started_at     = time.time()
-            self.song_duration       = _DEFAULT_SONG_DURATION
-            self._duration_confirmed = False
+            self.song_duration       = dur
+            self._duration_confirmed = bool(dur != _DEFAULT_SONG_DURATION)
 
             # Top up the queue after consuming one
             self._refill_upcoming(db)
