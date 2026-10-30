@@ -299,7 +299,19 @@ const Admin = (() => {
           </div>
           <div class="q-artist">Req by: ${_esc(req.requester_name)}</div>
         </div>
+        <button class="btn-rm btn-rm-req" data-req-id="${req.request_id}" title="Remove request">✕</button>
       `;
+
+      item.querySelector('.btn-rm-req')?.addEventListener('click', async (e) => {
+        const id = parseInt(e.currentTarget.dataset.reqId);
+        try {
+          await _api('DELETE', `/requests/${id}`);
+          _toast('Removed request', 'ok');
+          await _loadStatus();
+        } catch {
+          _toast('Could not remove request', 'err');
+        }
+      });
       list.appendChild(item);
     });
     
@@ -436,7 +448,17 @@ const Admin = (() => {
           <div class="cat-title">${_esc(song.title)} ${durBadge}</div>
           <div class="cat-sub">${_esc(song.artist)}${song.movie ? ' · ' + _esc(song.movie) : ''} ${song.release_year ? '(' + song.release_year + ')' : ''}</div>
         </div>
-        <button class="btn-outline btn-add-queue" data-song-id="${song.id}">+ Add to Queue</button>
+        <div class="cat-actions">
+          <button class="btn-outline btn-add-queue" data-song-id="${song.id}">+ Add to Queue</button>
+          <button class="btn-del-song" data-song-id="${song.id}" title="Delete song from catalog" aria-label="Delete song">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              <line x1="10" y1="11" x2="10" y2="17"></line>
+              <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+          </button>
+        </div>
       `;
       item.querySelector('.btn-add-queue').addEventListener('click', async (e) => {
         const btn = e.currentTarget;
@@ -451,6 +473,27 @@ const Admin = (() => {
         } finally {
           btn.disabled = false;
           btn.textContent = '+ Add to Queue';
+        }
+      });
+      item.querySelector('.btn-del-song').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        if (!confirm(`Are you sure you want to delete "${song.title}" from the song catalog?`)) {
+          return;
+        }
+        btn.disabled = true;
+        try {
+          await _api('DELETE', `/songs/${song.id}`);
+          _toast(`🗑️ "${song.title}" deleted`, 'ok');
+          _allSongs = _allSongs.filter(s => s.id !== song.id);
+          $('catalog-count').textContent = `${_allSongs.length} songs`;
+          item.remove();
+          if (!_allSongs.length) {
+            list.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:13px;padding:20px">No songs found</div>';
+          }
+          await _loadStatus();
+        } catch (err) {
+          _toast(err.message || 'Failed to delete song', 'err');
+          btn.disabled = false;
         }
       });
       list.appendChild(item);

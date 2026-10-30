@@ -188,6 +188,40 @@ def add_new_song(body: NewSongBody, x_admin_username: str = Header(None), x_admi
     finally:
         db.close()
 
+
+@router.delete("/songs/{song_id}")
+async def delete_song(song_id: int, x_admin_username: str = Header(None), x_admin_password: str = Header(None)):
+    _require_auth(x_admin_username, x_admin_password)
+    db = SessionLocal()
+    try:
+        song = db.query(Song).filter(Song.id == song_id).first()
+        if not song:
+            raise HTTPException(status_code=404, detail="Song not found")
+        song.active = False
+        db.commit()
+    finally:
+        db.close()
+
+    # If song was in upcoming queue, remove it and refill
+    radio_engine.admin_remove_from_upcoming(song_id)
+    # If in request queue, remove as well
+    radio_engine.request_queue = [r for r in radio_engine.request_queue if r.get("song", {}).get("id") != song_id]
+    await radio_engine.broadcast_state()
+
+    return {"success": True, "message": f"Song {song_id} deleted"}
+
+
+@router.delete("/requests/{request_id}")
+async def delete_request(request_id: int, x_admin_username: str = Header(None), x_admin_password: str = Header(None)):
+    _require_auth(x_admin_username, x_admin_password)
+    before = len(radio_engine.request_queue)
+    radio_engine.request_queue = [r for r in radio_engine.request_queue if r.get("request_id") != request_id]
+    if len(radio_engine.request_queue) < before:
+        await radio_engine.broadcast_state()
+        return {"success": True, "message": f"Request {request_id} removed"}
+    raise HTTPException(status_code=404, detail="Request not found in queue")
+
+
 @router.get("/yt-info")
 async def get_yt_info(url: str, x_admin_username: str = Header(None), x_admin_password: str = Header(None)):
     _require_auth(x_admin_username, x_admin_password)

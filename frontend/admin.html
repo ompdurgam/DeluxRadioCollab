@@ -145,6 +145,10 @@
     .btn-outline:hover { background: var(--bg); border-color: #cbd5e1; }
     .btn-primary { background: var(--amber); border: 1px solid var(--amber); border-radius: 8px; color: #fff; font-family: inherit; font-size: 12px; font-weight: 600; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; display: flex; align-items: center; gap: 6px; }
     .btn-primary:hover { background: var(--amber-dk); border-color: var(--amber-dk); box-shadow: 0 2px 6px rgba(245,158,11,0.2); }
+    .cat-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .btn-del-song { background: transparent; border: 1px solid var(--border); border-radius: 8px; color: #94a3b8; padding: 6px 8px; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .btn-del-song:hover:not(:disabled) { background: #fef2f2; border-color: #fecaca; color: var(--red); }
+    .btn-del-song:disabled { opacity: 0.4; cursor: not-allowed; }
 
     /* Modals */
     .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.6); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; pointer-events: none; transition: opacity 0.3s; padding: 20px; }
@@ -329,6 +333,6 @@
 
 <div class="toast" id="toast"></div>
 
-<script src="/js/admin.js?v=3"></script>
+<script src="/js/admin.js?v=4"></script>
 </body>
 </html>
