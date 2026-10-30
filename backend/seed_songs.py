@@ -208,4 +208,9 @@ def seed(reseed: bool = False):
 
 if __name__ == "__main__":
     reseed_flag = "--reseed" in sys.argv or "--reset" in sys.argv or "-r" in sys.argv
+    fetch_flag = "--fetch-durations" in sys.argv or "--durations" in sys.argv
     seed(reseed=reseed_flag)
+    if fetch_flag:
+        from fetch_durations import update_all_durations
+        import asyncio
+        asyncio.run(update_all_durations())

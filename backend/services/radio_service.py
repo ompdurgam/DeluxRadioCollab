@@ -44,6 +44,7 @@ class RadioEngine:
             "server_time":     time.time(),
             "upcoming_queue":  self.upcoming_queue[:_UPCOMING_QUEUE_SIZE],
             "request_queue":   self.request_queue,
+            "queue":           self.request_queue,
             "pending_count":   len(self.pending_queue),
             "listener_count":  manager.listener_count,
             "mode":            self.mode,
@@ -118,35 +119,39 @@ class RadioEngine:
 
     # ── Duration reporting ─────────────────────────────────────────────────────
     async def update_song_duration(self, video_id: str, duration_seconds: float):
-        if not self.current_song:
-            return
-        if self.current_song.get("youtube_video_id") != video_id:
-            return
         if duration_seconds < 10:
             return
 
         duration_seconds = float(duration_seconds)
-        if not self._duration_confirmed or abs(self.song_duration - duration_seconds) > 3:
-            print(f"[DURATION] Confirmed: {duration_seconds:.0f}s for \"{self.current_song['title']}\"")
-            self.song_duration       = duration_seconds
-            self.current_song["duration"] = duration_seconds
-            self._duration_confirmed = True
 
-            # Save confirmed duration to DB so future plays use this exact length
-            def _save_db():
-                db = SessionLocal()
-                try:
-                    db_song = db.query(Song).filter(Song.youtube_video_id == video_id).first()
-                    if db_song:
-                        db_song.duration = int(duration_seconds)
-                        db.commit()
-                except Exception as e:
-                    print(f"[DURATION DB ERR] {e}")
-                finally:
-                    db.close()
+        # Save confirmed duration to DB so future plays use this exact length
+        def _save_db():
+            db = SessionLocal()
+            try:
+                db_song = db.query(Song).filter(Song.youtube_video_id == video_id).first()
+                if db_song:
+                    db_song.duration = int(duration_seconds)
+                    db.commit()
+            except Exception as e:
+                print(f"[DURATION DB ERR] {e}")
+            finally:
+                db.close()
 
-            await asyncio.to_thread(_save_db)
-            await self.broadcast_state()
+        await asyncio.to_thread(_save_db)
+
+        # Update in upcoming queue if present
+        for s in self.upcoming_queue:
+            if s.get("youtube_video_id") == video_id:
+                s["duration"] = int(duration_seconds)
+
+        # Update current song if it matches
+        if self.current_song and self.current_song.get("youtube_video_id") == video_id:
+            if not self._duration_confirmed or abs(self.song_duration - duration_seconds) > 2:
+                print(f"[DURATION] Confirmed: {duration_seconds:.0f}s for \"{self.current_song['title']}\"")
+                self.song_duration       = duration_seconds
+                self.current_song["duration"] = int(duration_seconds)
+                self._duration_confirmed = True
+                await self.broadcast_state()
 
     # ── Server auto-loop (THE authoritative clock) ─────────────────────────────
     async def start_auto_loop(self):
@@ -267,8 +272,8 @@ class RadioEngine:
         print(f"[QUEUE] Admin reordered: {[s['title'] for s in self.upcoming_queue]}")
         return True
 
-    async def admin_add_to_upcoming(self, song_id: int, position: int = -1) -> bool:
-        """Admin: insert a specific song into the upcoming queue."""
+    async def admin_add_to_upcoming(self, song_id: int, position: int = 0) -> bool:
+        """Admin: insert a specific song into the upcoming queue (defaults to position 0: top/front of queue)."""
         db = SessionLocal()
         try:
             song = db.query(Song).filter(Song.id == song_id, Song.active == True).first()
@@ -277,11 +282,14 @@ class RadioEngine:
             song_dict = self._song_to_dict(song)
             # Remove if already in queue
             self.upcoming_queue = [s for s in self.upcoming_queue if s["id"] != song_id]
-            if position < 0 or position >= len(self.upcoming_queue):
+            if position <= 0:
+                self.upcoming_queue.insert(0, song_dict)
+            elif position >= len(self.upcoming_queue):
                 self.upcoming_queue.append(song_dict)
             else:
                 self.upcoming_queue.insert(position, song_dict)
             self.upcoming_queue = self.upcoming_queue[:_UPCOMING_QUEUE_SIZE]
+            print(f"[QUEUE] Admin added '{song.title}' to queue at position {min(position, len(self.upcoming_queue)-1)}")
             return True
         finally:
             db.close()

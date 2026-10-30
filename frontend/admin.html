@@ -137,8 +137,9 @@
     .cat-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; transition: background 0.2s; border: 1px solid transparent; }
     .cat-item:hover { background: var(--bg); border-color: var(--border); }
     .cat-info { flex: 1; min-width: 0; }
-    .cat-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; }
+    .cat-title { font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-bottom: 2px; display: flex; align-items: center; gap: 8px; }
     .cat-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cat-dur, .q-dur { display: inline-block; font-size: 11px; font-weight: 600; color: var(--amber-dk); background: rgba(245,158,11,0.12); padding: 1px 6px; border-radius: 4px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
     
     .btn-outline { background: transparent; border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: inherit; font-size: 12px; font-weight: 500; padding: 6px 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; }
     .btn-outline:hover { background: var(--bg); border-color: #cbd5e1; }

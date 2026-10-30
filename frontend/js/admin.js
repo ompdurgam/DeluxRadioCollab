@@ -230,12 +230,16 @@ const Admin = (() => {
         ? `<img class="q-thumb" src="https://img.youtube.com/vi/${song.youtube_video_id}/default.jpg" alt="" />`
         : `<div class="q-thumb"></div>`;
 
+      const durBadge = song.duration ? `<span class="q-dur">${_fmtTime(song.duration)}</span>` : '';
       item.innerHTML = `
         <div class="q-rank ${i === 0 ? 'first' : ''}">${i + 1}</div>
         <span class="q-handle" title="Drag to reorder">⠿</span>
         ${thumb}
         <div class="q-info">
-          <div class="q-title">${_esc(song.title)}</div>
+          <div class="q-title" style="display:flex; justify-content:space-between; align-items:center; padding-right:8px;">
+            <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${_esc(song.title)}</span>
+            ${durBadge}
+          </div>
           <div class="q-artist">${_esc(song.artist || '')}${song.movie ? ' · ' + _esc(song.movie) : ''}</div>
         </div>
         <button class="btn-rm" data-song-id="${song.id}" title="Remove from queue">✕</button>
@@ -426,9 +430,10 @@ const Admin = (() => {
     songs.forEach(song => {
       const item = document.createElement('div');
       item.className = 'cat-item';
+      const durBadge = song.duration ? `<span class="cat-dur">${_fmtTime(song.duration)}</span>` : '';
       item.innerHTML = `
         <div class="cat-info">
-          <div class="cat-title">${_esc(song.title)}</div>
+          <div class="cat-title">${_esc(song.title)} ${durBadge}</div>
           <div class="cat-sub">${_esc(song.artist)}${song.movie ? ' · ' + _esc(song.movie) : ''} ${song.release_year ? '(' + song.release_year + ')' : ''}</div>
         </div>
         <button class="btn-outline btn-add-queue" data-song-id="${song.id}">+ Add to Queue</button>
@@ -438,8 +443,8 @@ const Admin = (() => {
         btn.disabled = true;
         btn.textContent = '…';
         try {
-          await _api('POST', '/upcoming/add', { song_id: song.id });
-          _toast(`➕ "${song.title}" added to queue`, 'ok');
+          await _api('POST', '/upcoming/add', { song_id: song.id, position: 0 });
+          _toast(`⚡ "${song.title}" added to top of queue (plays next)`, 'ok');
           await _loadStatus();
         } catch (err) {
           _toast('Could not add — queue may be full', 'err');

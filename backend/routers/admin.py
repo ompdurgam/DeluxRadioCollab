@@ -92,7 +92,7 @@ async def reorder_upcoming(body: ReorderBody, x_admin_username: str = Header(Non
 
 class AddSongBody(BaseModel):
     song_id: int
-    position: int = -1
+    position: int = 0
 
 
 @router.post("/upcoming/add")
@@ -137,6 +137,7 @@ def get_all_songs(x_admin_username: str = Header(None), x_admin_password: str = 
                     "id": s.id, "title": s.title, "artist": s.artist,
                     "movie": s.movie or "", "release_year": s.release_year,
                     "youtube_video_id": s.youtube_video_id,
+                    "duration": s.duration,
                 }
                 for s in songs
             ],
@@ -150,10 +151,25 @@ class NewSongBody(BaseModel):
     movie: Optional[str] = ""
     release_year: int
     youtube_video_id: str
+    duration: Optional[int] = None
 
 @router.post("/songs")
 def add_new_song(body: NewSongBody, x_admin_username: str = Header(None), x_admin_password: str = Header(None)):
     _require_auth(x_admin_username, x_admin_password)
+    dur = body.duration
+    if not dur or dur < 10:
+        # Fast fallback: attempt regex check
+        try:
+            import httpx, re
+            r = httpx.get(f"https://www.youtube.com/watch?v={body.youtube_video_id}", timeout=4.0, follow_redirects=True)
+            m = re.search(r'"approxDurationMs":"(\d+)"', r.text) or re.search(r'"lengthSeconds":"(\d+)"', r.text)
+            if m:
+                dur = int(m.group(1)) // 1000 if 'approx' in m.group(0) else int(m.group(1))
+        except Exception:
+            pass
+    if not dur or dur < 10:
+        dur = 250
+
     db = SessionLocal()
     try:
         new_song = Song(
@@ -162,23 +178,60 @@ def add_new_song(body: NewSongBody, x_admin_username: str = Header(None), x_admi
             movie=body.movie,
             release_year=body.release_year,
             youtube_video_id=body.youtube_video_id,
-            duration=240,
+            duration=dur,
             active=True
         )
         db.add(new_song)
         db.commit()
         db.refresh(new_song)
-        return {"success": True, "song_id": new_song.id}
+        return {"success": True, "song_id": new_song.id, "duration": new_song.duration}
     finally:
         db.close()
 
 @router.get("/yt-info")
 async def get_yt_info(url: str, x_admin_username: str = Header(None), x_admin_password: str = Header(None)):
     _require_auth(x_admin_username, x_admin_password)
-    async with httpx.AsyncClient() as client:
-        resp = await client.get(f"https://www.youtube.com/oembed?url={url}&format=json")
-        if resp.status_code == 200:
-            data = resp.json()
-            return {"success": True, "title": data.get("title"), "author": data.get("author_name")}
-        else:
-            raise HTTPException(status_code=400, detail="Invalid YouTube URL or video unavailable")
+    import re
+    m = re.search(r'(?:v=|\/|be\/)([0-9A-Za-z_-]{11})', url)
+    video_id = m.group(1) if m else None
+
+    title = None
+    author = None
+    duration = None
+
+    if video_id:
+        try:
+            async with httpx.AsyncClient(timeout=6.0) as client:
+                resp = await client.get(f"https://www.youtube.com/watch?v={video_id}", follow_redirects=True)
+                if resp.status_code == 200:
+                    text = resp.text
+                    dm = re.search(r'"approxDurationMs":"(\d+)"', text) or re.search(r'"lengthSeconds":"(\d+)"', text)
+                    if dm:
+                        duration = int(dm.group(1)) // 1000 if 'approx' in dm.group(0) else int(dm.group(1))
+                    tm = re.search(r'<title>(.*?)</title>', text)
+                    if tm:
+                        t = tm.group(1).replace(" - YouTube", "").strip()
+                        if t:
+                            title = t
+        except Exception:
+            pass
+
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        try:
+            resp = await client.get(f"https://www.youtube.com/oembed?url={url}&format=json")
+            if resp.status_code == 200:
+                data = resp.json()
+                title = title or data.get("title")
+                author = data.get("author_name")
+        except Exception:
+            pass
+
+    if title or video_id:
+        return {
+            "success": True,
+            "title": title or "Unknown Title",
+            "author": author or "Unknown Artist",
+            "video_id": video_id,
+            "duration": duration,
+        }
+    raise HTTPException(status_code=400, detail="Invalid YouTube URL or video unavailable")

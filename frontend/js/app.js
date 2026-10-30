@@ -33,6 +33,7 @@ const App = (() => {
     ytLoaded:      false,  // YT player has a video loaded and can .play()
     // Sync clock
     songStartedAt:  0,     // Server's Unix timestamp when current song started
+    songDuration:   0,     // Current song total duration in seconds
     clockDrift:     0,     // Estimated difference: server_time - local_time
   };
 
@@ -52,6 +53,7 @@ const App = (() => {
     Chat.init(null, state.username, state.clientId);  // bind events once
     RequestModule.init();
     _updateUsernameDisplay();
+    _startProgressTick();
     _connectWebSocket();
     _fetchInitialState();
   }
@@ -174,12 +176,21 @@ const App = (() => {
       state.songStartedAt = data.song_started_at;
     }
 
+    if (data.song_duration && data.song_duration > 0) {
+      state.songDuration = data.song_duration;
+    } else if (data.current_song?.duration) {
+      state.songDuration = data.current_song.duration;
+    }
+
     state.listeners = data.listener_count || 0;
     state.radioMode  = data.mode || 'auto';
 
     _updateListeners(state.listeners);
     _updateModePill(state.radioMode);
-    _updateQueue(data.queue || []);
+    const q = (data.request_queue && data.request_queue.length)
+      ? data.request_queue
+      : (data.upcoming_queue || data.queue || []);
+    _updateQueue(q);
 
     // Update song display (but DON'T start playback — wait for user click)
     const song = data.current_song;
@@ -527,15 +538,45 @@ const App = (() => {
   function _updateQueue(queue) {
     const strip = $('queue-strip');
     if (!strip) return;
-    if (!queue.length) {
+    if (!queue || !queue.length) {
       strip.classList.add('hidden');
     } else {
       strip.classList.remove('hidden');
       const names = queue.slice(0, 3)
-        .map(r => `${r.requester_name} → ${r.song?.title || '…'}`)
+        .map(r => {
+          if (r.requester_name) {
+            const dur = r.song?.duration ? ` (${_fmtTime(r.song.duration)})` : '';
+            return `${r.requester_name} → ${r.song?.title || '…'}${dur}`;
+          }
+          const dur = r.duration ? ` (${_fmtTime(r.duration)})` : '';
+          return `${r.title || '…'}${dur}`;
+        })
         .join(', ');
       strip.innerHTML = `🎵 Up next: <strong>${names}</strong>${queue.length > 3 ? ` +${queue.length - 3} more` : ''}`;
     }
+  }
+
+  function _fmtTime(sec) {
+    if (!sec || sec < 0) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function _updateProgressDisplay() {
+    const timeEl = $('track-time');
+    if (!timeEl) return;
+    const dur = state.songDuration || state.currentSong?.duration || 0;
+    if (!state.isPlaying || !state.songStartedAt) {
+      timeEl.textContent = dur > 0 ? `· ${_fmtTime(dur)}` : '';
+      return;
+    }
+    const elapsed = Math.max(0, _getSyncOffset());
+    timeEl.textContent = dur > 0 ? `· ${_fmtTime(elapsed)} / ${_fmtTime(dur)}` : `· ${_fmtTime(elapsed)}`;
+  }
+
+  function _startProgressTick() {
+    setInterval(_updateProgressDisplay, 1000);
   }
 
   function _updateUsernameDisplay() {
