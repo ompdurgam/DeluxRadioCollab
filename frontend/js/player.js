@@ -11,14 +11,56 @@ const Player = (() => {
   let currentVolume = 80;
   let currentMuted = false;
   
-  // HTML5 Audio Player (Bypasses mobile restrictions)
+  // HTML5 Audio Player (Bypasses mobile restrictions and enables background play)
   const audioPlayer = new Audio();
+  audioPlayer.preload = 'auto';
+  audioPlayer.setAttribute('playsinline', 'true');
+  audioPlayer.setAttribute('webkit-playsinline', 'true');
   // DO NOT use crossOrigin attribute, googlevideo redirect does not send CORS
   
+  // ── Web Audio API Keep-Alive Anchor (Chrome Android background audio protection) ──
+  let keepAliveCtx = null;
+  let keepAliveGain = null;
+
+  function _initKeepAlive() {
+    if (keepAliveCtx) {
+      if (keepAliveCtx.state === 'suspended') {
+        keepAliveCtx.resume().catch(() => {});
+      }
+      return;
+    }
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      keepAliveCtx = new AudioCtx();
+
+      // Silent buffer looped continuously to keep Android AudioFlinger hardware stream alive
+      const buffer = keepAliveCtx.createBuffer(1, keepAliveCtx.sampleRate * 0.5, keepAliveCtx.sampleRate);
+      const source = keepAliveCtx.createBufferSource();
+      source.buffer = buffer;
+      source.loop = true;
+
+      keepAliveGain = keepAliveCtx.createGain();
+      keepAliveGain.gain.value = 0.0001; // Inaudible, but flags active output to Chrome/Android audio subsystem
+
+      source.connect(keepAliveGain);
+      keepAliveGain.connect(keepAliveCtx.destination);
+      source.start(0);
+
+      if (keepAliveCtx.state === 'suspended') {
+        keepAliveCtx.resume().catch(() => {});
+      }
+      console.log('[Player] Web Audio background keep-alive active');
+    } catch (e) {
+      console.warn('[Player] Keep-alive setup notice:', e);
+    }
+  }
+
   let pendingVideoId = null;
   let pendingPlay = false;
   let pendingStart = 0;
   let currentVideoId = null;
+  let audioRetryCount = 0;
 
   // Callbacks
   let _onEndedCb = null;
@@ -26,6 +68,17 @@ const Player = (() => {
   let _onErrorCb = null;
 
   function _fallbackToYouTubeAudio(autoplay = true) {
+    // NEVER switch to YouTube iframe audio if page is hidden/minimized because YouTube iframes are killed by Chrome in background
+    if (document.hidden) {
+      console.log('[Player] Suppressed YouTube fallback: page is minimized, retrying direct audio stream');
+      if (currentVideoId && autoplay) {
+        audioPlayer.src = `/api/radio/stream/${currentVideoId}?t=${Date.now()}`;
+        audioPlayer.load();
+        audioPlayer.play().catch(() => {});
+      }
+      return;
+    }
+
     if (!isReady || !ytPlayer) return;
     try {
       usingYtAudio = true;
@@ -47,6 +100,7 @@ const Player = (() => {
   // ── Audio Events ──
   audioPlayer.addEventListener('playing', () => {
     console.log('[Player] Audio Playing');
+    audioRetryCount = 0;
     if (_onPlayingCb) _onPlayingCb(currentVideoId);
   });
 
@@ -56,8 +110,21 @@ const Player = (() => {
   });
 
   audioPlayer.addEventListener('error', (e) => {
-    console.warn('[Player] Audio stream error, trying YouTube iframe fallback:', e);
-    _fallbackToYouTubeAudio(true);
+    console.warn('[Player] Audio stream error:', e);
+    if (audioRetryCount < 2 && currentVideoId) {
+      audioRetryCount++;
+      console.log(`[Player] Retrying direct audio stream (attempt ${audioRetryCount})...`);
+      setTimeout(() => {
+        audioPlayer.src = `/api/radio/stream/${currentVideoId}?retry=${audioRetryCount}`;
+        audioPlayer.load();
+        audioPlayer.play().catch(() => {});
+      }, 1000);
+      return;
+    }
+    // Only fallback if visible and not on background
+    if (!document.hidden) {
+      _fallbackToYouTubeAudio(true);
+    }
     if (_onErrorCb) _onErrorCb(5); 
   });
 
@@ -115,7 +182,8 @@ const Player = (() => {
 
   function _doLoad(videoId, autoplay, startSeconds) {
     currentVideoId = videoId;
-    usingYtAudio = false; // Reset per song; default to HTML5 direct stream
+    _initKeepAlive();
+    usingYtAudio = false; // Reset per song; default to HTML5 direct stream for background play
     
     // 1. Update Audio — must wait for loadedmetadata before seeking
     audioPlayer.src = `/api/radio/stream/${videoId}`;
@@ -130,8 +198,11 @@ const Player = (() => {
         const p = audioPlayer.play();
         if (p && typeof p.catch === 'function') {
           p.catch(e => {
-            console.warn("[Player] Audio blocked or failed:", e);
-            _fallbackToYouTubeAudio(autoplay);
+            console.warn("[Player] Audio play notice:", e.message || e);
+            // On mobile background or document.hidden, never switch to YouTube iframe because YouTube iframe stops in background
+            if (!document.hidden && (!e || e.name !== 'AbortError')) {
+              _fallbackToYouTubeAudio(autoplay);
+            }
           });
         }
       }
@@ -145,15 +216,17 @@ const Player = (() => {
       // Fallback: if loadedmetadata never fires (some streams), play after timeout
       setTimeout(() => {
         if (autoplay && audioPlayer.paused && !usingYtAudio) {
-          audioPlayer.play().catch(() => _fallbackToYouTubeAudio(autoplay));
+          audioPlayer.play().catch(() => {
+            if (!document.hidden) _fallbackToYouTubeAudio(autoplay);
+          });
         }
-      }, 3000);
+      }, 2500);
     }
 
     // 2. Update Visuals
     if (ytPlayer && isReady) {
       try {
-        if (!usingYtAudio) ytPlayer.mute();
+        ytPlayer.mute();
         const opts = startSeconds > 0 ? { videoId, startSeconds: Math.floor(startSeconds) } : videoId;
         if (autoplay) {
           ytPlayer.loadVideoById(opts);
@@ -170,6 +243,7 @@ const Player = (() => {
 
   function loadVideo(videoId, autoplay = true, startSeconds = 0) {
     if (!videoId) return;
+    _initKeepAlive();
     
     if (!isReady) {
       currentVideoId = videoId;
@@ -183,7 +257,9 @@ const Player = (() => {
           catch (e) { /* ignore */ }
         }
         if (autoplay) {
-          audioPlayer.play().catch(() => _fallbackToYouTubeAudio(autoplay));
+          audioPlayer.play().catch(() => {
+            if (!document.hidden) _fallbackToYouTubeAudio(autoplay);
+          });
         }
       };
       
@@ -193,9 +269,11 @@ const Player = (() => {
         audioPlayer.addEventListener('loadedmetadata', seekAndPlay, { once: true });
         setTimeout(() => {
           if (autoplay && audioPlayer.paused && !usingYtAudio) {
-            audioPlayer.play().catch(() => _fallbackToYouTubeAudio(autoplay));
+            audioPlayer.play().catch(() => {
+              if (!document.hidden) _fallbackToYouTubeAudio(autoplay);
+            });
           }
-        }, 3000);
+        }, 2500);
       }
       
       pendingVideoId = videoId;
@@ -208,12 +286,19 @@ const Player = (() => {
   }
 
   function play() {
-    if (usingYtAudio && isReady && ytPlayer) {
+    _initKeepAlive();
+    if (usingYtAudio && isReady && ytPlayer && !document.hidden) {
       try { ytPlayer.playVideo(); } catch {}
     } else {
-      audioPlayer.play().catch(() => _fallbackToYouTubeAudio(true));
-      if (isReady && ytPlayer) {
-        try { ytPlayer.playVideo(); } catch {}
+      usingYtAudio = false;
+      audioPlayer.play().catch(e => {
+        if (!document.hidden) _fallbackToYouTubeAudio(true);
+      });
+      if (isReady && ytPlayer && !document.hidden) {
+        try {
+          ytPlayer.mute();
+          ytPlayer.playVideo();
+        } catch {}
       }
     }
   }
@@ -223,6 +308,21 @@ const Player = (() => {
     if (isReady && ytPlayer) {
       try { ytPlayer.pauseVideo(); } catch {}
     }
+  }
+
+  function keepPlaying() {
+    _initKeepAlive();
+    if (audioPlayer.paused && currentVideoId && !usingYtAudio) {
+      console.log('[Player] Resuming HTML5 direct audio in background');
+      const p = audioPlayer.play();
+      if (p && typeof p.catch === 'function') {
+        p.catch(e => console.warn('[Player] keepPlaying notice:', e.message || e));
+      }
+    }
+  }
+
+  function initKeepAlive() {
+    _initKeepAlive();
   }
 
   function setVolume(vol) {
@@ -245,7 +345,7 @@ const Player = (() => {
   }
 
   function isPlaying() {
-    if (usingYtAudio && isReady && ytPlayer) {
+    if (usingYtAudio && isReady && ytPlayer && !document.hidden) {
       try { return ytPlayer.getPlayerState() === 1; } catch { return false; }
     }
     return !audioPlayer.paused && audioPlayer.currentTime > 0;
@@ -267,7 +367,20 @@ const Player = (() => {
   function onPlaying(cb) { _onPlayingCb = cb; }
   function onError(cb) { _onErrorCb = cb; }
 
-  return { loadVideo, play, pause, setVolume, setMuted, isPlaying, getDuration, onEnded, onPlaying, onError };
+  return {
+    loadVideo,
+    play,
+    pause,
+    keepPlaying,
+    initKeepAlive,
+    setVolume,
+    setMuted,
+    isPlaying,
+    getDuration,
+    onEnded,
+    onPlaying,
+    onError,
+  };
 })();
 
 // Inject YouTube IFrame API script

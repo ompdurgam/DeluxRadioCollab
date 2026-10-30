@@ -307,6 +307,66 @@ const App = (() => {
   }
 
 
+  // ── Mobile Background Playback & MediaSession Helpers ────────────────────
+  let wakeLock = null;
+  async function _requestWakeLock() {
+    if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+      try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } catch (err) {}
+    }
+  }
+  function _releaseWakeLock() {
+    if (wakeLock) {
+      wakeLock.release().catch(() => {});
+      wakeLock = null;
+    }
+  }
+
+  function _initMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      navigator.mediaSession.setActionHandler('play', () => {
+        if (!state.isPlaying) _handlePlayPause();
+      });
+      navigator.mediaSession.setActionHandler('pause', () => {
+        if (state.isPlaying) _handlePlayPause();
+      });
+      navigator.mediaSession.setActionHandler('stop', () => {
+        if (state.isPlaying) _handlePlayPause();
+      });
+    } catch (e) {
+      console.warn('[MediaSession] Handler setup error:', e);
+    }
+  }
+
+  function _updateMediaSession(song, isPlaying = true) {
+    if (!('mediaSession' in navigator)) return;
+    try {
+      const title = song?.title || 'Delux Radio';
+      const artist = song?.artist || '90s Bollywood Nonstop';
+      const artwork = song?.thumbnail || `${location.origin}/assets/logo.png`;
+
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: title,
+        artist: artist,
+        album: 'Delux Radio Live',
+        artwork: [
+          { src: artwork, sizes: '96x96', type: 'image/jpeg' },
+          { src: artwork, sizes: '128x128', type: 'image/jpeg' },
+          { src: artwork, sizes: '192x192', type: 'image/jpeg' },
+          { src: artwork, sizes: '256x256', type: 'image/jpeg' },
+          { src: artwork, sizes: '512x512', type: 'image/jpeg' }
+        ]
+      });
+
+      navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+    } catch (e) {
+      console.warn('[MediaSession] Metadata update error:', e);
+    }
+  }
+
   /**
    * Load a song into the YouTube player and start playing.
    * @param {Object} song
@@ -317,6 +377,7 @@ const App = (() => {
 
     state.currentSong = song;
     _updateSongDisplay(song);
+    _updateMediaSession(song, true);
     _updatePlayBtn(true);
     _startEq();
     $('cover-disc')?.classList.add('spinning');
@@ -489,16 +550,44 @@ const App = (() => {
           if (state.isPlaying) _checkServerSongSync();
         }, 3000);
       }
+    // ── Mobile Background Playback & Visibility ─────────────────────────
+    _initMediaSession();
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        console.log('[App] Document minimized/hidden — keeping audio active');
+        if (state.isPlaying) {
+          Player.keepPlaying();
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+          }
+        }
+      } else {
+        console.log('[App] Document restored to foreground');
+        if (state.isPlaying) {
+          _requestWakeLock();
+          _startEq();
+          $('cover-disc')?.classList.add('spinning');
+          _checkServerSongSync();
+        }
+      }
     });
   }
 
 
   // ── NOT async — must stay synchronous to keep user-gesture chain on mobile ──
   function _handlePlayPause() {
+    // Unblock AudioContext immediately within user gesture chain
+    Player.initKeepAlive();
+
     if (state.isPlaying) {
       // Pause
       state.isPlaying = false;
       Player.pause();
+      _releaseWakeLock();
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'paused';
+      }
       _updatePlayBtn(false);
       _stopEq();
       $('cover-disc')?.classList.remove('spinning');
@@ -507,6 +596,11 @@ const App = (() => {
 
     // Play
     state.isPlaying = true;
+    _requestWakeLock();
+    if ('mediaSession' in navigator) {
+      navigator.mediaSession.playbackState = 'playing';
+      if (state.currentSong) _updateMediaSession(state.currentSong, true);
+    }
     _updatePlayBtn(true);
 
     // Enforce global sync on play: Always reload the video at the current live offset.
