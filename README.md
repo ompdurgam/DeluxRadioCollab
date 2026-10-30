@@ -57,6 +57,14 @@ pip install -r requirements.txt
 python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+### ☁️ Cloud VM Production Start (Ubuntu / Debian)
+
+To deploy 24/7 on any cloud VM (AWS, DigitalOcean, GCP, Hetzner):
+```bash
+sudo ./vm.sh
+```
+This automatically installs FFmpeg, Node.js, and Nginx, sets up systemd for 24/7 background running, and configures reverse proxy + WebSockets on port 80.
+
 ### Access
 
 | URL | Description |
