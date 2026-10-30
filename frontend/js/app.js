@@ -237,7 +237,7 @@ const App = (() => {
   let _lastSyncCheck = 0;
   function _checkServerSongSync() {
     const now = Date.now();
-    if (now - _lastSyncCheck < 2000) return;
+    if (now - _lastSyncCheck < 5000) return;
     _lastSyncCheck = now;
 
     fetch('/api/radio/state')
@@ -645,33 +645,36 @@ const App = (() => {
 
   // Refresh sync offset in background after video is already playing.
   // Called AFTER the gesture — no autoplay restriction applies here.
+  // Delayed by 3s to let the player stabilise before checking sync.
   function _refreshSyncBackground() {
-    fetch('/api/radio/state')
-      .then(r => r.json())
-      .then(data => {
-        if (!data?.success || !data.state) return;
-        const s = data.state;
-        // Update clock drift
-        if (s.server_time > 0) {
-          state.clockDrift = s.server_time - (Date.now() / 1000);
-        }
-        if (s.song_started_at > 0) {
-          state.songStartedAt = s.song_started_at;
-        }
-        // If the song changed while we were loading, seek to correct position
-        if (s.current_song?.youtube_video_id === state.currentSong?.youtube_video_id) {
-          const correctOffset = _getSyncOffset();
-          if (correctOffset > 5) {
-            // Only re-seek if we're significantly out of sync
-            console.log(`[Sync] Background correction → ${correctOffset.toFixed(1)}s`);
-            Player.loadVideo(s.current_song.youtube_video_id, true, correctOffset);
+    setTimeout(() => {
+      fetch('/api/radio/state')
+        .then(r => r.json())
+        .then(data => {
+          if (!data?.success || !data.state) return;
+          const s = data.state;
+          // Update clock drift
+          if (s.server_time > 0) {
+            state.clockDrift = s.server_time - (Date.now() / 1000);
           }
-        } else if (s.current_song) {
-          // Server has moved on to a different song
-          _loadYTSong(s.current_song, _getSyncOffset());
-        }
-      })
-      .catch(() => {});
+          if (s.song_started_at > 0) {
+            state.songStartedAt = s.song_started_at;
+          }
+          // If the song changed while we were loading, seek to correct position
+          if (s.current_song?.youtube_video_id === state.currentSong?.youtube_video_id) {
+            const correctOffset = _getSyncOffset();
+            // Only re-seek if noticeably out of sync (>10s); small drift is fine
+            if (correctOffset > 10) {
+              console.log(`[Sync] Background correction → ${correctOffset.toFixed(1)}s`);
+              Player.loadVideo(s.current_song.youtube_video_id, true, correctOffset);
+            }
+          } else if (s.current_song) {
+            // Server has moved on to a different song
+            _loadYTSong(s.current_song, _getSyncOffset());
+          }
+        })
+        .catch(() => {});
+    }, 3000);
   }
 
   // Fetch current radio state and start playing (async — called after play unlock)
@@ -764,6 +767,7 @@ const App = (() => {
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
+  let _lastMediaSessionPositionUpdate = 0;
   function _updateProgressDisplay() {
     const timeEl = $('track-time');
     if (!timeEl) return;
@@ -774,8 +778,14 @@ const App = (() => {
     }
     const elapsed = Math.max(0, _getSyncOffset());
     timeEl.textContent = dur > 0 ? `· ${_fmtTime(elapsed)} / ${_fmtTime(dur)}` : `· ${_fmtTime(elapsed)}`;
+
+    // MediaSession position is expensive — only update every 5s
     if (dur > 0) {
-      _updateMediaSessionPosition(elapsed, dur);
+      const now = Date.now();
+      if (now - _lastMediaSessionPositionUpdate > 5000) {
+        _lastMediaSessionPositionUpdate = now;
+        _updateMediaSessionPosition(elapsed, dur);
+      }
     }
 
     // Sync watchdog: if local playback elapsed exceeds duration + 4s, verify server state
@@ -788,9 +798,9 @@ const App = (() => {
     let lastPoll = 0;
     setInterval(() => {
       _updateProgressDisplay();
-      // If WebSocket is not connected, poll every 5s to keep listeners count and queue alive
+      // If WebSocket is not connected, poll every 10s to keep listeners count and queue alive
       const now = Date.now();
-      if (!state.wsConnected && (now - lastPoll > 5000)) {
+      if (!state.wsConnected && (now - lastPoll > 10000)) {
         lastPoll = now;
         _checkServerSongSync();
       }
