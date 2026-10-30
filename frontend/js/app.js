@@ -570,7 +570,7 @@ const App = (() => {
 
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
-        console.log('[App] Document minimized/hidden — keeping audio active');
+        // Page minimised / screen locked — assert playback to Chrome's audio subsystem
         if (state.isPlaying) {
           Player.keepPlaying();
           if ('mediaSession' in navigator) {
@@ -578,11 +578,17 @@ const App = (() => {
           }
         }
       } else {
-        console.log('[App] Document restored to foreground');
+        // Page restored — Chrome may have force-paused audio; resume immediately
         if (state.isPlaying) {
+          Player.keepPlaying(); // resume before sync check
           _requestWakeLock();
           _startEq();
           $('cover-disc')?.classList.add('spinning');
+          // Re-assert MediaSession so lock-screen controls reappear
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+            if (state.currentSong) _updateMediaSession(state.currentSong, true);
+          }
           _checkServerSongSync();
         }
       }

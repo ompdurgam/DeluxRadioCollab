@@ -1,24 +1,37 @@
 /**
  * YouTube IFrame Player & Direct Audio Stream Integration — Delux Radio
  * Manages YouTube player state (for ambient visuals) and HTML5 Audio (for sound).
+ *
+ * Chrome Android background audio strategy:
+ *   1. Route audioPlayer through Web Audio API via createMediaElementSource so
+ *      they share ONE audio session. The keep-alive silent buffer keeps the
+ *      AudioContext alive; the AudioContext keeps the audioPlayer alive.
+ *   2. MediaSession playbackState = 'playing' tells Android the stream is live.
+ *   3. 'pause' event auto-resumes if Chrome forcibly suspends the element.
  */
 
 const Player = (() => {
-  // YouTube Visual Player
+  // YouTube Visual Player (visuals only — audio goes through HTML5 audio)
   let ytPlayer = null;
   let isReady = false;
   let usingYtAudio = false;
   let currentVolume = 80;
   let currentMuted = false;
 
-  // HTML5 Audio Player (Bypasses mobile restrictions and enables background play)
+  // HTML5 Audio Player — this is the real audio source
   const audioPlayer = new Audio();
   audioPlayer.preload = 'auto';
   audioPlayer.setAttribute('playsinline', 'true');
   audioPlayer.setAttribute('webkit-playsinline', 'true');
+  audioPlayer.setAttribute('x-webkit-airplay', 'allow');
 
-  // ── Web Audio API Keep-Alive Anchor (Chrome Android background audio protection) ──
-  let keepAliveCtx = null;
+  // ── Web Audio API Keep-Alive Anchor ──────────────────────────────────────────
+  // Route audioPlayer through the AudioContext so they share the same session.
+  // Chrome Android only keeps audio alive when there is an active AudioContext
+  // destination output — the silent buffer provides that, and the MediaElementSource
+  // binds the real audio stream to the same session.
+  let keepAliveCtx  = null;
+  let mediaElemSrc  = null; // AudioContext source node wrapping audioPlayer
 
   function _initKeepAlive() {
     if (keepAliveCtx) {
@@ -30,37 +43,71 @@ const Player = (() => {
       if (!AudioCtx) return;
       keepAliveCtx = new AudioCtx();
 
-      // Silent buffer looped continuously to keep Android AudioFlinger hardware stream alive
-      const buffer = keepAliveCtx.createBuffer(1, keepAliveCtx.sampleRate * 0.5, keepAliveCtx.sampleRate);
-      const source = keepAliveCtx.createBufferSource();
-      source.buffer = buffer;
-      source.loop = true;
+      // 1. Connect the real audioPlayer into this AudioContext
+      //    This fuses both into the same OS audio session.
+      if (!mediaElemSrc) {
+        try {
+          mediaElemSrc = keepAliveCtx.createMediaElementSource(audioPlayer);
+          mediaElemSrc.connect(keepAliveCtx.destination);
+        } catch (e) {
+          // Safari older versions may not allow this — gracefully ignore
+          console.warn('[Player] MediaElementSource note:', e?.message);
+          mediaElemSrc = null;
+        }
+      }
 
-      const gain = keepAliveCtx.createGain();
-      gain.gain.value = 0.0001; // Inaudible but flags active output to Android audio subsystem
+      // 2. Silent looped buffer — keeps the AudioContext output stream
+      //    active so Android audio subsystem never closes the session.
+      const buf    = keepAliveCtx.createBuffer(1, keepAliveCtx.sampleRate, keepAliveCtx.sampleRate);
+      const src    = keepAliveCtx.createBufferSource();
+      src.buffer   = buf;
+      src.loop     = true;
 
-      source.connect(gain);
+      const gain   = keepAliveCtx.createGain();
+      gain.gain.value = 0.00001; // fully inaudible
+
+      src.connect(gain);
       gain.connect(keepAliveCtx.destination);
-      source.start(0);
+      src.start(0);
 
       if (keepAliveCtx.state === 'suspended') keepAliveCtx.resume().catch(() => {});
+      console.log('[Player] Web Audio keep-alive active (Chrome background fix)');
     } catch (e) {
       console.warn('[Player] Keep-alive setup notice:', e);
     }
   }
 
+  // ── Auto-resume if Chrome forcibly pauses the audio in background ───────────
+  // Chrome sometimes fires a 'pause' event on the audio element when the page
+  // goes hidden. We catch it and re-play immediately unless the user paused.
+  let _userPaused = false;
+
+  audioPlayer.addEventListener('pause', () => {
+    if (!_userPaused && currentVideoId) {
+      // Small delay avoids fighting Chrome's own seek/load pause events
+      setTimeout(() => {
+        if (!_userPaused && audioPlayer.paused && currentVideoId) {
+          console.log('[Player] Auto-resuming after forced background pause');
+          audioPlayer.play().catch(() => {});
+          // Resume AudioContext too
+          if (keepAliveCtx?.state === 'suspended') keepAliveCtx.resume().catch(() => {});
+        }
+      }, 400);
+    }
+  });
+
   let pendingVideoId = null;
-  let pendingPlay = false;
-  let pendingStart = 0;
+  let pendingPlay    = false;
+  let pendingStart   = 0;
   let currentVideoId = null;
 
   // Callbacks
-  let _onEndedCb = null;
+  let _onEndedCb  = null;
   let _onPlayingCb = null;
-  let _onErrorCb = null;
+  let _onErrorCb   = null;
 
   function _fallbackToYouTubeAudio(autoplay = true) {
-    // Never switch to YouTube iframe if page is minimised — Chrome kills iframes in background
+    // Never switch to YouTube iframe when minimised — Chrome kills iframes in background
     if (document.hidden) {
       if (currentVideoId && autoplay) {
         audioPlayer.src = `/api/radio/stream/${currentVideoId}?t=${Date.now()}`;
@@ -72,7 +119,9 @@ const Player = (() => {
     if (!isReady || !ytPlayer) return;
     try {
       usingYtAudio = true;
+      _userPaused = true;
       audioPlayer.pause();
+      _userPaused = false;
       if (!currentMuted) {
         ytPlayer.unMute();
         ytPlayer.setVolume(currentVolume);
@@ -84,11 +133,13 @@ const Player = (() => {
     }
   }
 
-  // ── Audio Events ──
+  // ── Audio Events ──────────────────────────────────────────────────────────────
   audioPlayer.addEventListener('playing', () => {
     usingYtAudio = false;
     if (ytPlayer && isReady) { try { ytPlayer.mute(); } catch {} }
     if (_onPlayingCb) _onPlayingCb(currentVideoId);
+    // Make sure MediaSession knows we're playing so Android lock screen shows controls
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
   });
 
   audioPlayer.addEventListener('ended', () => {
@@ -96,11 +147,13 @@ const Player = (() => {
   });
 
   audioPlayer.addEventListener('error', () => {
-    _fallbackToYouTubeAudio(true);
-    if (_onErrorCb) _onErrorCb(5);
+    if (!_userPaused) {
+      _fallbackToYouTubeAudio(true);
+      if (_onErrorCb) _onErrorCb(5);
+    }
   });
 
-  // ── YouTube Visuals ──
+  // ── YouTube Visuals ──────────────────────────────────────────────────────────
   window.onYouTubeIframeAPIReady = function () {
     ytPlayer = new YT.Player('yt-player', {
       height: '100%',
@@ -116,16 +169,15 @@ const Player = (() => {
       events: {
         onReady: (event) => {
           isReady = true;
-          usingYtAudio ? event.target.unMute() && event.target.setVolume(currentVolume)
-                       : event.target.mute();
+          event.target.mute(); // always muted; audio comes from audioPlayer
           if (pendingVideoId) {
             _doLoad(pendingVideoId, pendingPlay, pendingStart);
             pendingVideoId = null;
           }
         },
         onStateChange: (event) => {
-          if (event.data === 0 && _onEndedCb) _onEndedCb();           // ENDED
-          else if (event.data === 1 && usingYtAudio && _onPlayingCb)  // PLAYING
+          if (event.data === 0 && _onEndedCb) _onEndedCb();          // ENDED
+          else if (event.data === 1 && usingYtAudio && _onPlayingCb) // PLAYING (fallback mode)
             _onPlayingCb(currentVideoId);
         },
         onError: (e) => { if (_onErrorCb) _onErrorCb(e.data); }
@@ -133,12 +185,14 @@ const Player = (() => {
     });
   };
 
+  // ── Core load logic ──────────────────────────────────────────────────────────
   function _doLoad(videoId, autoplay, startSeconds) {
     currentVideoId = videoId;
-    _initKeepAlive();
+    _initKeepAlive(); // must run inside or after a user gesture
     usingYtAudio = false;
 
-    // 1. HTML5 audio — seek once metadata is ready
+    // 1. HTML5 audio stream
+    _userPaused = false;
     audioPlayer.src = `/api/radio/stream/${videoId}`;
     audioPlayer.load();
 
@@ -166,7 +220,7 @@ const Player = (() => {
       }, 2500);
     }
 
-    // 2. YouTube visuals (muted)
+    // 2. YouTube visuals (always muted — audio is handled by audioPlayer above)
     if (ytPlayer && isReady) {
       try {
         ytPlayer.mute();
@@ -178,22 +232,22 @@ const Player = (() => {
     }
   }
 
-  // ── Public API ──
+  // ── Public API ───────────────────────────────────────────────────────────────
 
   function loadVideo(videoId, autoplay = true, startSeconds = 0) {
     if (!videoId) return;
     _initKeepAlive();
     if (!isReady) {
-      // Queue until YT player is ready; still start audio immediately
       pendingVideoId = videoId;
-      pendingPlay = autoplay;
-      pendingStart = startSeconds;
+      pendingPlay    = autoplay;
+      pendingStart   = startSeconds;
     }
     _doLoad(videoId, autoplay, startSeconds);
   }
 
   function play() {
     _initKeepAlive();
+    _userPaused = false;
     if (usingYtAudio && isReady && ytPlayer && !document.hidden) {
       try { ytPlayer.playVideo(); } catch {}
     } else {
@@ -206,14 +260,17 @@ const Player = (() => {
   }
 
   function pause() {
+    _userPaused = true;
     audioPlayer.pause();
     if (isReady && ytPlayer) { try { ytPlayer.pauseVideo(); } catch {} }
   }
 
   function keepPlaying() {
     _initKeepAlive();
+    _userPaused = false;
+    if (keepAliveCtx?.state === 'suspended') keepAliveCtx.resume().catch(() => {});
     if (audioPlayer.paused && currentVideoId && !usingYtAudio) {
-      audioPlayer.play().catch(e => console.warn('[Player] keepPlaying notice:', e?.message || e));
+      audioPlayer.play().catch(e => console.warn('[Player] keepPlaying notice:', e?.message));
     }
   }
 
@@ -221,6 +278,7 @@ const Player = (() => {
 
   function setVolume(vol) {
     currentVolume = Math.max(0, Math.min(100, vol));
+    // If we have a MediaElementSource, volume is controlled on the element directly
     audioPlayer.volume = currentVolume / 100;
     if (isReady && ytPlayer) { try { ytPlayer.setVolume(currentVolume); } catch {} }
   }
@@ -252,11 +310,15 @@ const Player = (() => {
     return 0;
   }
 
-  function onEnded(cb)  { _onEndedCb  = cb; }
-  function onPlaying(cb){ _onPlayingCb = cb; }
-  function onError(cb)  { _onErrorCb  = cb; }
+  function onEnded(cb)   { _onEndedCb   = cb; }
+  function onPlaying(cb) { _onPlayingCb  = cb; }
+  function onError(cb)   { _onErrorCb    = cb; }
 
-  return { loadVideo, play, pause, keepPlaying, initKeepAlive, setVolume, setMuted, isPlaying, getDuration, onEnded, onPlaying, onError };
+  return {
+    loadVideo, play, pause, keepPlaying, initKeepAlive,
+    setVolume, setMuted, isPlaying, getDuration,
+    onEnded, onPlaying, onError,
+  };
 })();
 
 // Inject YouTube IFrame API script
