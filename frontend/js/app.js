@@ -567,6 +567,8 @@ const App = (() => {
           if (state.isPlaying) _checkServerSongSync();
         }, 3000);
       }
+    });
+
     // ── Mobile Background Playback & Visibility ─────────────────────────
     _initMediaSession();
 

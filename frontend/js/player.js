@@ -99,8 +99,11 @@ const Player = (() => {
 
   // ── Audio Events ──
   audioPlayer.addEventListener('playing', () => {
-    console.log('[Player] Audio Playing');
-    audioRetryCount = 0;
+    console.log('[Player] Direct audio stream active');
+    usingYtAudio = false;
+    if (ytPlayer && isReady) {
+      try { ytPlayer.mute(); } catch {}
+    }
     if (_onPlayingCb) _onPlayingCb(currentVideoId);
   });
 
@@ -110,21 +113,8 @@ const Player = (() => {
   });
 
   audioPlayer.addEventListener('error', (e) => {
-    console.warn('[Player] Audio stream error:', e);
-    if (audioRetryCount < 2 && currentVideoId) {
-      audioRetryCount++;
-      console.log(`[Player] Retrying direct audio stream (attempt ${audioRetryCount})...`);
-      setTimeout(() => {
-        audioPlayer.src = `/api/radio/stream/${currentVideoId}?retry=${audioRetryCount}`;
-        audioPlayer.load();
-        audioPlayer.play().catch(() => {});
-      }, 1000);
-      return;
-    }
-    // Only fallback if visible and not on background
-    if (!document.hidden) {
-      _fallbackToYouTubeAudio(true);
-    }
+    console.warn('[Player] Audio stream error, falling back to YouTube audio immediately:', e);
+    _fallbackToYouTubeAudio(true);
     if (_onErrorCb) _onErrorCb(5); 
   });
 
