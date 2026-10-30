@@ -9,7 +9,11 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 
-DATABASE_URL = "sqlite:///./delux_radio.db"
+import os
+from pathlib import Path
+
+DEFAULT_DB_PATH = Path(__file__).resolve().parent / "delux_radio.db"
+DATABASE_URL = os.getenv("DATABASE_URL") or f"sqlite:///{DEFAULT_DB_PATH}"
 
 engine = create_engine(
     DATABASE_URL,
