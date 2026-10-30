@@ -131,6 +131,33 @@
               <div class="track-name" id="track-name">Press Play to Tune In</div>
             </div>
             <div class="track-artist" id="track-artist">Delux Radio · 90s Bollywood</div>
+
+            <!-- Progress row (EQ bars + time display — no seeking per spec) -->
+            <div class="progress-row" style="margin-top:6px">
+              <!-- Equalizer bars (visual only) -->
+              <div class="eq-bars" id="eq-bars" aria-hidden="true">
+                <div class="eq-bar" style="height:40%;--d:0.6s"></div>
+                <div class="eq-bar" style="height:90%;--d:0.9s"></div>
+                <div class="eq-bar" style="height:55%;--d:0.7s"></div>
+                <div class="eq-bar" style="height:100%;--d:0.5s"></div>
+                <div class="eq-bar" style="height:65%;--d:0.8s"></div>
+              </div>
+              <!-- Station tag -->
+              <span class="track-station" style="margin-left:6px">Nonstop 90s</span>
+              <span id="track-time" class="track-station" style="margin-left:6px; font-variant-numeric: tabular-nums; opacity:0.85;"></span>
+              <!-- Volume -->
+              <div class="volume-wrap" style="margin-left:auto">
+                <button class="vol-icon" id="btn-mute" aria-label="Mute/Unmute">
+                  <svg class="vol-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
+                  </svg>
+                </button>
+                <input type="range" class="vol-slider" id="volume-slider" min="0" max="100" value="80"
+                  aria-label="Volume" />
+              </div>
+            </div>
           </div>
 
           <!-- Actions: Play/Pause ONLY (per spec — no skip/next/prev for listeners) -->
@@ -138,27 +165,6 @@
             <button class="icon-btn play-btn" id="btn-play" aria-label="Play / Pause">
               ▶
             </button>
-          </div>
-
-          <!-- Progress row (EQ bars + time display + volume) -->
-          <div class="progress-row">
-            <!-- Equalizer bars (visual only) -->
-            <div class="eq-bars" id="eq-bars" aria-hidden="true">
-              <div class="eq-bar" style="height:40%;--d:0.6s"></div>
-              <div class="eq-bar" style="height:90%;--d:0.9s"></div>
-              <div class="eq-bar" style="height:55%;--d:0.7s"></div>
-              <div class="eq-bar" style="height:100%;--d:0.5s"></div>
-              <div class="eq-bar" style="height:65%;--d:0.8s"></div>
-            </div>
-            <!-- Station tag -->
-            <span class="track-station">Nonstop 90s</span>
-            <span id="track-time" class="track-station" style="margin-left:6px; font-variant-numeric: tabular-nums; opacity:0.85;"></span>
-            <!-- Volume -->
-            <div class="volume-wrap" style="margin-left:auto">
-              <button class="vol-icon" id="btn-mute" aria-label="Mute/Unmute">🔊</button>
-              <input type="range" class="vol-slider" id="volume-slider" min="0" max="100" value="80"
-                aria-label="Volume" />
-            </div>
           </div>
 
         </section>

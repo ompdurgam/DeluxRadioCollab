@@ -269,14 +269,11 @@ body {
    MUSIC PLAYER CARD  (matches deluxsalon.in .music-player)
    ═══════════════════════════════════════════════════════════════════════════ */
 .music-player {
-  display: grid;
-  grid-template-columns: 52px 1fr auto;
-  grid-template-rows: auto auto;
+  display: flex;
   align-items: center;
-  column-gap: 14px;
-  row-gap: 4px;
+  gap: 12px;
   width: 100%;
-  background: rgba(20,10,8,0.7);
+  background: rgba(20,10,8,0.65);
   border: 1px solid rgba(255,255,255,0.22);
   border-radius: 24px;
   padding: 12px 18px;
@@ -287,8 +284,6 @@ body {
 
 /* Spinning vinyl disc */
 .music-cover-frame {
-  grid-column: 1;
-  grid-row: 1 / span 2;
   width: 52px; height: 52px;
   border-radius: 50%;
   position: relative;
@@ -330,12 +325,11 @@ body {
 
 /* Track info block */
 .track-block {
-  grid-column: 2;
-  grid-row: 1;
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
 }
 .track-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .track-name {
@@ -357,12 +351,10 @@ body {
 
 /* Progress row */
 .progress-row {
-  grid-column: 2;
-  grid-row: 2;
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 2px;
+  margin-top: 4px;
   font-size: 10px;
   font-family: monospace;
   color: rgba(255,255,255,0.55);
@@ -409,8 +401,6 @@ body {
 
 /* Player action buttons */
 .player-actions {
-  grid-column: 3;
-  grid-row: 1 / span 2;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -459,8 +449,19 @@ body {
   align-items: center;
   gap: 6px;
 }
-.vol-icon { font-size: 13px; cursor: pointer; color: rgba(255,255,255,0.7); }
-.vol-icon:hover { color: var(--amber-lt); }
+.vol-icon {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: rgba(255,255,255,0.7);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, transform 0.15s;
+}
+.vol-icon:hover { color: var(--amber-lt); transform: scale(1.1); }
+.vol-svg { width: 15px; height: 15px; stroke: currentColor; fill: none; display: block; }
 .vol-slider {
   width: 60px;
   -webkit-appearance: none;
@@ -1127,94 +1128,17 @@ body {
 
 /* ── Small screen layout ───────────────────────────────────────────────────── */
 @media (max-width: 600px) {
-  .hero-header { padding: 0 8px; gap: 4px; top: 8px; }
-  .header-pill { padding: 0 8px; font-size: 11px; height: 32px; gap: 4px; }
+  .hero-header { padding: 0 8px; gap: 6px; }
+  .header-pill { padding: 0 10px; font-size: 11px; }
   .online-pill { min-width: auto; }
-  
-  .station-title-wrap { margin-top: 14px; margin-bottom: 4px; }
-  .station-title { font-size: clamp(2.8rem, 14vw, 4.4rem); line-height: 0.95; }
-  
-  .hero-center-stack {
-    width: 100%;
-    max-width: 100%;
-    padding: 0 10px;
-    margin-bottom: 12px;
-    gap: 8px;
-  }
-  
-  .music-player {
-    grid-template-columns: 48px 1fr 48px;
-    grid-template-rows: auto auto;
-    column-gap: 10px;
-    row-gap: 8px;
-    padding: 10px 12px;
-    border-radius: 18px;
-  }
-  
-  .music-cover-frame {
-    grid-column: 1;
-    grid-row: 1;
-    width: 48px;
-    height: 48px;
-  }
-  
-  .track-block {
-    grid-column: 2;
-    grid-row: 1;
-    min-width: 0;
-    justify-content: center;
-  }
-  
-  .track-name {
-    font-size: 13px;
-    font-weight: 700;
-    line-height: 1.25;
-  }
-  
-  .track-artist {
-    font-size: 11px;
-    opacity: 0.7;
-  }
-  
-  .player-actions {
-    grid-column: 3;
-    grid-row: 1;
-    align-self: center;
-    justify-self: end;
-  }
-  
-  .play-btn {
-    width: 48px;
-    height: 48px;
-    font-size: 18px;
-  }
-  
-  .progress-row {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-top: 8px;
-    margin-top: 0;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 10px;
-    gap: 6px;
-  }
-  
-  .volume-wrap {
-    margin-left: auto;
-    gap: 4px;
-  }
-  
-  .vol-slider {
-    width: 52px;
-  }
+  .station-title { font-size: clamp(3.2rem, 16vw, 5.5rem); }
+  .music-player { padding: 10px 14px; gap: 10px; }
 
   /* Chat panel: full-width on mobile */
   .chat-panel { width: 100%; right: -100%; }
   .chat-panel.open { right: 0; }
+
+  .hero-center-stack { padding: 0 6px; }
 
   /* Modals: full screen on mobile */
   .app-modal-card { border-radius: 0; max-width: 100%; height: 100dvh; overflow-y: auto; }
