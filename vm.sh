@@ -43,17 +43,17 @@ elif command -v python >/dev/null 2>&1; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# MODE A: GOOGLE COLAB DEPLOYMENT (Instant HTTPS Tunnel via Cloudflare)
+# MODE A: GOOGLE COLAB DEPLOYMENT (Instant HTTPS Tunnel via Pinggy)
 # ══════════════════════════════════════════════════════════════════════════════
 if [ "$IS_COLAB" -eq 1 ]; then
     echo -e "${GREEN}${BOLD}[i] Google Colab Environment Detected!${NC}"
-    echo "    Running lightweight Colab pipeline with automatic Cloudflare Tunnel..."
+    echo "    Running lightweight Colab pipeline with automatic Pinggy Tunnel..."
     echo ""
 
     # 1. System packages
-    echo -e "${CYAN}[1/5] Installing FFmpeg and Node.js in Colab...${NC}"
+    echo -e "${CYAN}[1/5] Installing FFmpeg, OpenSSH, and Node.js in Colab...${NC}"
     apt-get update -qq >/dev/null 2>&1 || true
-    apt-get install -y -qq ffmpeg nodejs >/dev/null 2>&1 || true
+    apt-get install -y -qq ffmpeg nodejs openssh-client >/dev/null 2>&1 || true
 
     # 2. Python dependencies
     echo -e "${CYAN}[2/5] Installing Python dependencies...${NC}"
@@ -78,31 +78,38 @@ if [ "$IS_COLAB" -eq 1 ]; then
     echo -e "${CYAN}[4/5] Initializing song catalog database...${NC}"
     (cd "${BACKEND_DIR}" && $PYTHON_CMD seed_songs.py) || true
 
-    # 5. Cloudflare Tunnel & Launch
-    echo -e "${CYAN}[5/5] Launching Cloudflare Tunnel & Delux Radio...${NC}"
-    
-    # Download cloudflared if not present
-    if [ ! -x "${BIN_DIR}/cloudflared" ]; then
-        echo " [*] Downloading Cloudflare tunnel binary..."
-        curl -sSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64" -o "${BIN_DIR}/cloudflared"
-        chmod +x "${BIN_DIR}/cloudflared"
+    # 5. Launch Pinggy Tunnel & Server
+    echo -e "${CYAN}[5/5] Launching Delux Radio with Pinggy Tunnel...${NC}"
+
+    TOKEN="${PINGGY_TOKEN:-}"
+    if [ -z "$TOKEN" ] && [ -f "${BACKEND_DIR}/.env" ]; then
+        TOKEN=$(grep -E '^PINGGY_TOKEN=' "${BACKEND_DIR}/.env" | cut -d '=' -f 2 | tr -d ' "\r' || true)
+    fi
+
+    PINGGY_HOST="a.pinggy.io"
+    if [ -n "$TOKEN" ]; then
+        PINGGY_HOST="${TOKEN}@a.pinggy.io"
+        echo -e " ${GREEN}[+] Using authenticated Pinggy token...${NC}"
+    else
+        echo -e " ${GREEN}[+] Using public free Pinggy tunnel...${NC}"
     fi
 
     echo ""
     echo -e "${GREEN}${BOLD}=================================================================="
-    echo " 🚀 Delux Radio is launching on Colab!"
-    echo " Look below for your public https://*.trycloudflare.com link!"
+    echo " 🚀 Delux Radio is LIVE on Google Colab via Pinggy!"
+    echo " Your public HTTPS URL (https://*.a.pinggy.link) will appear below:"
     echo "==================================================================${NC}"
     echo ""
 
-    # Start Cloudflare tunnel in background
-    "${BIN_DIR}/cloudflared" tunnel --url http://127.0.0.1:8000 2>&1 | grep --line-buffered -E "trycloudflare\.com" &
-    TUNNEL_PID=$!
+    # Start FastAPI server in background
+    ( cd "${BACKEND_DIR}" && exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8000 ) &
+    SERVER_PID=$!
 
-    # Start FastAPI server
-    cd "${BACKEND_DIR}"
-    trap "kill $TUNNEL_PID 2>/dev/null || true; exit 0" SIGINT SIGTERM EXIT
-    exec $PYTHON_CMD -m uvicorn main:app --host 0.0.0.0 --port 8000
+    sleep 3
+    trap "kill $SERVER_PID 2>/dev/null || true; exit 0" SIGINT SIGTERM EXIT
+
+    # Run Pinggy in foreground so the live link & traffic dashboard are visible
+    ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -p 443 -R0:127.0.0.1:8000 "$PINGGY_HOST"
     exit 0
 fi
 
