@@ -168,22 +168,43 @@ async def report_duration(report: DurationReport):
     return {"success": False}
 
 
+@router.get("/thumb/{video_id}")
+async def get_thumbnail(video_id: str):
+    """
+    Proxy YouTube thumbnail with permissive CORS headers.
+    Ensures iOS/Android lock screen widgets and MediaSession artwork display properly.
+    """
+    from fastapi.responses import Response
+    url = f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                return Response(
+                    content=resp.content,
+                    media_type="image/jpeg",
+                    headers={
+                        "Access-Control-Allow-Origin": "*",
+                        "Cache-Control": "public, max-age=86400",
+                    }
+                )
+    except Exception:
+        pass
+    return RedirectResponse(url)
+
+
 @router.post("/song-ended")
 async def song_ended(db: Session = Depends(get_db)):
     """
     Client reports current song ended locally.
     If the server song has finished (elapsed >= song_duration - 5s) or server is idle,
     advance immediately and broadcast to all listeners.
-    Otherwise return current song state so client can resync.
+    Thread/task safe: prevents double advances from concurrent listener requests.
     """
-    import time
     from ws.manager import manager
 
-    elapsed = time.time() - radio_engine.song_started_at if radio_engine.song_started_at else 0
-    min_threshold = max(10.0, radio_engine.song_duration - 5.0)
-
-    if elapsed >= min_threshold or not radio_engine.is_playing:
-        next_play = await radio_engine._advance()
+    next_play = await radio_engine.advance_if_ended(-5.0)
+    if next_play:
         await radio_engine.broadcast_state()
         await manager.broadcast({"type": "play_next", "data": next_play})
         return {"success": True, "advanced": True, "next": next_play}
@@ -201,12 +222,9 @@ async def song_ended(db: Session = Depends(get_db)):
 
 @router.get("/next")
 async def get_next(db: Session = Depends(get_db)):
-    """Get what comes next (for admin preview)."""
-    if radio_engine.request_queue:
-        q = radio_engine.request_queue[0]
-        return {"success": True, "type": "request", "data": q}
-    song = radio_engine._pick_random_song(db)
-    return {"success": True, "type": "auto", "song": song}
+    """Get what comes next (for admin preview) without modifying the queue."""
+    preview = await radio_engine.get_next()
+    return {"success": True, **preview}
 
 
 @router.get("/queue")

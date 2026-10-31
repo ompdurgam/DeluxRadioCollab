@@ -12,7 +12,7 @@ const Chat = (() => {
   let _unread   = 0;
   let _typingTimer = null;
   let _typingUsers = new Set();   // display_names currently typing
-  let _typingTimeout = null;
+  let _typingTimeouts = new Map(); // display_name → timerId
   let _eventsbound = false;
 
   /* ── Quick emoji list ────────────────────────────────────────────────────── */
@@ -225,7 +225,8 @@ const Chat = (() => {
     const placeholder = container.querySelector('[data-placeholder]');
     placeholder?.remove();
 
-    const isOwn = data.client_id === _clientId;
+    const isOwn = (data.client_id && data.client_id === _clientId) ||
+                  (data.display_name && _username && data.display_name === _username);
     const bubble = document.createElement('div');
     bubble.className = `chat-bubble ${isOwn ? 'chat-bubble--own' : ''}`;
     bubble.dataset.msgId = data.id || '';
@@ -273,7 +274,7 @@ const Chat = (() => {
       return;
     }
 
-    messages.forEach(m => renderMessage({ ...m, client_id: '' }));
+    messages.forEach(m => renderMessage(m));
   }
 
   /* ── Render system/error message ──────────────────────────────────────────── */
@@ -341,18 +342,27 @@ const Chat = (() => {
 
   /* ── Handle incoming typing events ───────────────────────────────────────── */
   function handleTyping(data) {
-    if (data.display_name === _username) return;
+    if (!data?.display_name || data.display_name === _username) return;
     _typingUsers.add(data.display_name);
     _showTyping(_typingUsers);
 
-    clearTimeout(_typingTimeout);
-    _typingTimeout = setTimeout(() => {
+    if (_typingTimeouts.has(data.display_name)) {
+      clearTimeout(_typingTimeouts.get(data.display_name));
+    }
+    const timer = setTimeout(() => {
       _typingUsers.delete(data.display_name);
+      _typingTimeouts.delete(data.display_name);
       _showTyping(_typingUsers);
     }, 3500);
+    _typingTimeouts.set(data.display_name, timer);
   }
 
   function handleStopTyping(data) {
+    if (!data?.display_name) return;
+    if (_typingTimeouts.has(data.display_name)) {
+      clearTimeout(_typingTimeouts.get(data.display_name));
+      _typingTimeouts.delete(data.display_name);
+    }
     _typingUsers.delete(data.display_name);
     _showTyping(_typingUsers);
   }

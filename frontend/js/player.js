@@ -113,8 +113,9 @@ const Player = (() => {
         _loadingNewSrc = true;
         audioPlayer.src = `/api/radio/stream/${currentVideoId}?t=${Date.now()}`;
         audioPlayer.load();
-        _loadingNewSrc = false;
-        audioPlayer.play().catch(() => {});
+        audioPlayer.play()
+          .then(() => { _loadingNewSrc = false; })
+          .catch(() => { _loadingNewSrc = false; });
       }
       return;
     }
@@ -193,8 +194,6 @@ const Player = (() => {
     _loadingNewSrc = true;
     audioPlayer.src = `/api/radio/stream/${videoId}`;
     audioPlayer.load();
-    // Micro-task delay ensures the 'pause' event from .load() is handled before we clear the guard
-    Promise.resolve().then(() => { _loadingNewSrc = false; });
 
     const seekAndPlay = () => {
       _loadingNewSrc = false;
@@ -294,6 +293,13 @@ const Player = (() => {
     return !audioPlayer.paused && audioPlayer.currentTime > 0;
   }
 
+  function getCurrentTime() {
+    if (usingYtAudio && isReady && ytPlayer && !document.hidden) {
+      try { return ytPlayer.getCurrentTime() || 0; } catch {}
+    }
+    return (audioPlayer && !isNaN(audioPlayer.currentTime)) ? audioPlayer.currentTime : 0;
+  }
+
   function getDuration() {
     const d = audioPlayer.duration;
     if (d && !isNaN(d) && isFinite(d) && d > 10) return d;
@@ -307,7 +313,7 @@ const Player = (() => {
   function onPlaying(cb) { _onPlayingCb  = cb; }
   function onError(cb)   { _onErrorCb    = cb; }
 
-  return { loadVideo, play, pause, keepPlaying, initKeepAlive, setVolume, setMuted, isPlaying, getDuration, onEnded, onPlaying, onError };
+  return { loadVideo, play, pause, keepPlaying, initKeepAlive, setVolume, setMuted, isPlaying, getCurrentTime, getDuration, onEnded, onPlaying, onError };
 })();
 
 // Inject YouTube IFrame API script

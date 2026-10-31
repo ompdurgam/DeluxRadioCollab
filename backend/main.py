@@ -73,14 +73,25 @@ app.mount("/audio", StaticFiles(directory=str(AUDIO_DIR)), name="audio")
 
 # Rate limiting for chat
 _chat_rate: dict = {}  # session_id → [timestamps]
+_last_chat_cleanup: float = 0.0
 
 async def check_rate_limit(session_id: str) -> bool:
+    global _last_chat_cleanup
     import time
     now = time.time()
+
+    # Periodic cleanup of expired rate-limit records every 60s
+    if now - _last_chat_cleanup > 60.0:
+        _last_chat_cleanup = now
+        stale = [sid for sid, ts_list in _chat_rate.items() if not ts_list or (now - ts_list[-1] > 30.0)]
+        for sid in stale:
+            _chat_rate.pop(sid, None)
+
     history = _chat_rate.get(session_id, [])
     # Keep only messages in last 5 seconds
     history = [t for t in history if now - t < 5]
     if len(history) >= 4:
+        _chat_rate[session_id] = history
         return False  # Too many messages
     history.append(now)
     _chat_rate[session_id] = history
@@ -222,10 +233,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     except WebSocketDisconnect:
         manager.disconnect(client_id)
+        _chat_rate.pop(client_id, None)
         await radio_engine.broadcast_state()
     except Exception as e:
         print(f"WS error ({client_id}): {e}")
         manager.disconnect(client_id)
+        _chat_rate.pop(client_id, None)
         await radio_engine.broadcast_state()
 
 

@@ -189,10 +189,11 @@ class RadioEngine:
                     continue
                 elapsed = time.time() - self.song_started_at
                 if elapsed >= self.song_duration + _SKIP_BUFFER_SECONDS:
-                    print(f"[SKIP] [{elapsed:.0f}s/{self.song_duration:.0f}s] Advancing...")
-                    next_play = await self._advance()
-                    await self.broadcast_state()
-                    await manager.broadcast({"type": "play_next", "data": next_play})
+                    next_play = await self.advance_if_ended(_SKIP_BUFFER_SECONDS)
+                    if next_play:
+                        print(f"[SKIP] [{elapsed:.0f}s/{self.song_duration:.0f}s] Advancing...")
+                        await self.broadcast_state()
+                        await manager.broadcast({"type": "play_next", "data": next_play})
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -202,6 +203,25 @@ class RadioEngine:
     # ── Advance to next song ───────────────────────────────────────────────────
     async def _advance(self) -> Dict:
         """Internal: pick the next song from request_queue or upcoming_queue."""
+        async with self._processing_lock:
+            return await self._advance_locked()
+
+    async def advance_if_ended(self, min_threshold_buffer: float = 0.0) -> Optional[Dict]:
+        """
+        Advance to next song only if current song has finished.
+        Thread/task safe — prevents concurrent clients from double-advancing.
+        """
+        async with self._processing_lock:
+            if not self.is_playing or not self.song_started_at:
+                return await self._advance_locked()
+            elapsed = time.time() - self.song_started_at
+            threshold = max(10.0, self.song_duration + min_threshold_buffer)
+            if elapsed >= threshold:
+                return await self._advance_locked()
+            return None
+
+    async def _advance_locked(self) -> Dict:
+        """Must only be called while holding _processing_lock."""
         db = SessionLocal()
         try:
             # 1) Listener requests take priority
@@ -251,8 +271,24 @@ class RadioEngine:
 
     # ── Public API used by WS handler and admin ────────────────────────────────
     async def get_next(self) -> Dict:
-        """Alias used by existing code."""
-        return await self._advance()
+        """Read-only preview of what plays next without advancing the queue."""
+        if self.request_queue:
+            req = self.request_queue[0]
+            if req.get("ready"):
+                return {
+                    "type": "request",
+                    "request_id": req.get("request_id"),
+                    "rj_audio_url": req.get("rj_audio_url"),
+                    "song": req.get("song"),
+                }
+        if self.upcoming_queue:
+            return {"type": "auto", "song": self.upcoming_queue[0]}
+        db = SessionLocal()
+        try:
+            song = self._pick_random_song(db)
+            return {"type": "auto", "song": song}
+        finally:
+            db.close()
 
     async def admin_skip(self) -> Dict:
         """Admin: immediately skip to next song."""

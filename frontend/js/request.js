@@ -73,7 +73,12 @@ const RequestModule = (() => {
           data.results.forEach(song => {
             const div = document.createElement('div');
             div.className = 'autocomplete-item';
-            div.innerHTML = `${song.title} <small>${song.artist}</small>`;
+            const titleSpan = document.createElement('span');
+            titleSpan.textContent = (song.title || '') + ' ';
+            const artistSmall = document.createElement('small');
+            artistSmall.textContent = song.artist || '';
+            div.appendChild(titleSpan);
+            div.appendChild(artistSmall);
             div.addEventListener('click', () => {
               elements.songInput().value = song.title;
               box.style.display = 'none';

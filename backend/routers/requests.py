@@ -89,11 +89,21 @@ async def submit_request(
                 if not is_music:
                     raise HTTPException(status_code=400, detail="❌ Please provide a link to a Music video or Song.")
 
+            # Extract upload/release year from YouTube metadata with fallback
+            raw_year = info.get("release_year")
+            if not raw_year and info.get("upload_date"):
+                try:
+                    raw_year = int(str(info["upload_date"])[:4])
+                except (ValueError, TypeError):
+                    raw_year = None
+            if not raw_year:
+                raw_year = datetime.utcnow().year
+
             song = Song(
                 title=info.get("title", "Unknown Title"),
                 artist=info.get("uploader", "Unknown Artist"),
                 youtube_video_id=video_id,
-                release_year=2026,
+                release_year=int(raw_year),
                 duration=info.get("duration", 240),
                 active=True
             )
@@ -108,6 +118,25 @@ async def submit_request(
                 status_code=404,
                 detail=f"❌ '{body.song_name}' is not in the Delux catalog. Please provide a YouTube link instead."
             )
+
+    # Prevent duplicate requests for songs currently playing or already queued
+    if radio_engine.current_song and radio_engine.current_song.get("id") == song.id:
+        raise HTTPException(status_code=400, detail=f"❌ '{song.title}' is currently playing on Delux Radio!")
+
+    already_in_request_queue = any(
+        req_item.get("song", {}).get("id") == song.id
+        for req_item in radio_engine.request_queue
+    )
+    already_pending = False
+    if radio_engine.pending_queue:
+        pending_records = db.query(Request.song_id).filter(Request.id.in_(radio_engine.pending_queue)).all()
+        already_pending = any(r[0] == song.id for r in pending_records)
+
+    if already_in_request_queue or already_pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"❌ '{song.title}' is already in the request queue! Please request another track."
+        )
 
     # 3. Content moderation
     safe, reason = await moderate_request(
@@ -145,9 +174,9 @@ async def submit_request(
     }
 
     # 6. Mark as pending. The AI pipeline will add it to the ready queue once done.
+    queue_position = len(radio_engine.request_queue) + len(radio_engine.pending_queue) + 1
     if req.id not in radio_engine.pending_queue:
         radio_engine.pending_queue.append(req.id)
-    queue_position = len(radio_engine.request_queue) + len(radio_engine.pending_queue)
 
     # 7. AI pipeline runs in background — enriches queue entry with RJ script + audio
     background_tasks.add_task(process_request_pipeline, req.id)

@@ -235,9 +235,9 @@ const App = (() => {
 
   // ── Song transitions & Sync Watchdog ───────────────────────────────────────
   let _lastSyncCheck = 0;
-  function _checkServerSongSync() {
+  function _checkServerSongSync(force = false) {
     const now = Date.now();
-    if (now - _lastSyncCheck < 5000) return;
+    if (!force && now - _lastSyncCheck < 5000) return;
     _lastSyncCheck = now;
 
     fetch('/api/radio/state')
@@ -372,10 +372,9 @@ const App = (() => {
       const fallbackImg = `${location.origin}/img/backgroung_mobile.png`;
 
       const artworkList = videoId ? [
-        { src: `https://img.youtube.com/vi/${videoId}/default.jpg`, sizes: '120x90', type: 'image/jpeg' },
-        { src: `https://img.youtube.com/vi/${videoId}/mqdefault.jpg`, sizes: '320x180', type: 'image/jpeg' },
+        { src: `/api/radio/thumb/${videoId}`, sizes: '480x360', type: 'image/jpeg' },
         { src: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' },
-        { src: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`, sizes: '1280x720', type: 'image/jpeg' }
+        { src: fallbackImg, sizes: '512x512', type: 'image/png' }
       ] : [
         { src: fallbackImg, sizes: '512x512', type: 'image/png' }
       ];
@@ -621,7 +620,7 @@ const App = (() => {
             navigator.mediaSession.playbackState = 'playing';
             if (state.currentSong) _updateMediaSession(state.currentSong, true);
           }
-          _checkServerSongSync();
+          _checkServerSongSync(true);
         }
       }
     });
@@ -691,9 +690,11 @@ const App = (() => {
           // If the song changed while we were loading, seek to correct position
           if (s.current_song?.youtube_video_id === state.currentSong?.youtube_video_id) {
             const correctOffset = _getSyncOffset();
-            // Only re-seek if very far out of sync (>30s); smaller drift is not worth restarting the stream
-            if (correctOffset > 30) {
-              console.log(`[Sync] Background correction → ${correctOffset.toFixed(1)}s`);
+            const currentLocalTime = Player.getCurrentTime ? Player.getCurrentTime() : 0;
+            const drift = Math.abs(currentLocalTime - correctOffset);
+            // Only re-seek if actual playback drift from the server is significant (> 15s)
+            if (drift > 15) {
+              console.log(`[Sync] Background drift correction (${drift.toFixed(1)}s drift) → ${correctOffset.toFixed(1)}s`);
               Player.loadVideo(s.current_song.youtube_video_id, true, correctOffset);
             }
           } else if (s.current_song) {
@@ -880,7 +881,7 @@ const App = (() => {
   }
 
   // ── Utilities ──────────────────────────────────────────────────────────────
-  function _genId() { return Math.random().toString(36).substr(2, 9); }
+  function _genId() { return Math.random().toString(36).substring(2, 11); }
   function _esc(s) {
     return String(s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;')
