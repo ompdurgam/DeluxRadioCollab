@@ -317,6 +317,7 @@ const App = (() => {
   function _initMediaSession() {
     if (!('mediaSession' in navigator)) return;
     try {
+      // play / pause / stop — lock screen buttons
       navigator.mediaSession.setActionHandler('play', () => {
         if (!state.isPlaying) _handlePlayPause();
       });
@@ -326,6 +327,37 @@ const App = (() => {
       navigator.mediaSession.setActionHandler('stop', () => {
         if (state.isPlaying) _handlePlayPause();
       });
+
+      // nexttrack — required for Android to show the full media widget on lock screen.
+      // We skip to next song on the server like a normal "song ended" event.
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        if (!state.isPlaying) return;
+        fetch('/api/radio/song-ended', { method: 'POST' })
+          .then(r => r.json())
+          .then(d => { if (d?.next) _handlePlayNext(d.next); else _checkServerSongSync(); })
+          .catch(() => _checkServerSongSync());
+      });
+
+      // previoustrack — radio doesn't go back, just restart the current song from live offset
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        if (!state.isPlaying || !state.currentSong) return;
+        const offset = _getSyncOffset();
+        Player.loadVideo(state.currentSong.youtube_video_id, true, offset);
+      });
+
+      // seekto — optional but enables progress scrubbing on some lock screens
+      try {
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          // Radio is live; we can only approximate by seeking within the stream
+          if (details.seekTime !== undefined) {
+            const offset = Math.max(0, details.seekTime);
+            if (state.currentSong?.youtube_video_id) {
+              Player.loadVideo(state.currentSong.youtube_video_id, true, offset);
+            }
+          }
+        });
+      } catch (_) { /* seekto not supported on all platforms */ }
+
     } catch (e) {
       console.warn('[MediaSession] Handler setup error:', e);
     }
