@@ -77,14 +77,18 @@ const Player = (() => {
 
   // ── Auto-resume on forced background pause ───────────────────────────────────
   // Chrome may fire 'pause' when page hides. Re-play unless user paused it.
-  let _userPaused  = false;
-  let _resumeTimer = null;
+  // _userPaused  = user pressed stop
+  // _loadingNewSrc = audioPlayer.load() was called (triggers internal pause) — do NOT auto-resume
+  // usingYtAudio = YT fallback is active — do NOT try to resume HTML5 element
+  let _userPaused   = false;
+  let _loadingNewSrc = false;
+  let _resumeTimer   = null;
 
   audioPlayer.addEventListener('pause', () => {
-    if (_userPaused || !currentVideoId) return;
+    if (_userPaused || _loadingNewSrc || usingYtAudio || !currentVideoId) return;
     clearTimeout(_resumeTimer);
     _resumeTimer = setTimeout(() => {
-      if (!_userPaused && audioPlayer.paused && currentVideoId) {
+      if (!_userPaused && !_loadingNewSrc && !usingYtAudio && audioPlayer.paused && currentVideoId) {
         audioPlayer.play().catch(() => {});
         if (keepAliveCtx?.state === 'suspended') keepAliveCtx.resume().catch(() => {});
       }
@@ -106,23 +110,25 @@ const Player = (() => {
     // Never switch to YT iframe when minimised — Chrome kills iframes in background
     if (document.hidden) {
       if (currentVideoId && autoplay) {
+        _loadingNewSrc = true;
         audioPlayer.src = `/api/radio/stream/${currentVideoId}?t=${Date.now()}`;
         audioPlayer.load();
+        _loadingNewSrc = false;
         audioPlayer.play().catch(() => {});
       }
       return;
     }
     if (!isReady || !ytPlayer) return;
     try {
+      // Set usingYtAudio BEFORE pausing so the 'pause' auto-resume guard sees it
       usingYtAudio = true;
-      _userPaused = true;
       audioPlayer.pause();
-      _userPaused = false;
       if (!currentMuted) { ytPlayer.unMute(); ytPlayer.setVolume(currentVolume); }
       if (autoplay) ytPlayer.playVideo();
       if (_onPlayingCb) _onPlayingCb(currentVideoId);
     } catch (e) {
       console.warn('[Player] YT fallback error:', e);
+      usingYtAudio = false;
     }
   }
 
@@ -179,14 +185,19 @@ const Player = (() => {
   function _doLoad(videoId, autoplay, startSeconds) {
     currentVideoId = videoId;
     _initKeepAlive();
-    usingYtAudio = false;
-    _userPaused  = false;
+    usingYtAudio  = false;
+    _userPaused   = false;
 
     // 1. HTML5 audio stream
+    // Guard: audioPlayer.load() fires an internal 'pause' event — do not auto-resume during load
+    _loadingNewSrc = true;
     audioPlayer.src = `/api/radio/stream/${videoId}`;
     audioPlayer.load();
+    // Micro-task delay ensures the 'pause' event from .load() is handled before we clear the guard
+    Promise.resolve().then(() => { _loadingNewSrc = false; });
 
     const seekAndPlay = () => {
+      _loadingNewSrc = false;
       if (startSeconds > 0 && isFinite(audioPlayer.duration) && audioPlayer.duration > 1) {
         try { audioPlayer.currentTime = Math.min(startSeconds, audioPlayer.duration - 1); }
         catch (e) {}
@@ -202,8 +213,9 @@ const Player = (() => {
       seekAndPlay();
     } else {
       audioPlayer.addEventListener('loadedmetadata', seekAndPlay, { once: true });
-      // Safety fallback if loadedmetadata never fires
+      // Safety fallback if loadedmetadata never fires (some streams skip it)
       setTimeout(() => {
+        _loadingNewSrc = false;
         if (autoplay && audioPlayer.paused && !usingYtAudio) {
           audioPlayer.play().catch(() => { if (!document.hidden) _fallbackToYouTubeAudio(autoplay); });
         }

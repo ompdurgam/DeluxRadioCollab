@@ -691,8 +691,8 @@ const App = (() => {
           // If the song changed while we were loading, seek to correct position
           if (s.current_song?.youtube_video_id === state.currentSong?.youtube_video_id) {
             const correctOffset = _getSyncOffset();
-            // Only re-seek if noticeably out of sync (>10s); small drift is fine
-            if (correctOffset > 10) {
+            // Only re-seek if very far out of sync (>30s); smaller drift is not worth restarting the stream
+            if (correctOffset > 30) {
               console.log(`[Sync] Background correction → ${correctOffset.toFixed(1)}s`);
               Player.loadVideo(s.current_song.youtube_video_id, true, correctOffset);
             }
